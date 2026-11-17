@@ -1,0 +1,38 @@
+{
+  "name": "lms-demo-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LMS MVP demo backend - private Google Drive video streaming through Node.js",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node --watch-path=src src/index.js",
+    "start": "node src/index.js",
+    "seed": "node src/seed/seed.js",
+    "backfill": "node src/seed/backfillMetadata.js",
+    "backfill:access": "node src/seed/backfillCourseAccess.js",
+    "promote:admin": "node src/scripts/promoteAdmin.js",
+    "set:admin": "node src/scripts/setAdminAccount.js",
+    "drive:check": "node src/scripts/driveCheck.js",
+    "drive:link": "node src/scripts/driveLink.js",
+    "drive:import": "node src/scripts/driveImport.js",
+    "restore:courses": "node src/scripts/restoreCourses.js",
+    "delete:course": "node src/scripts/deleteCourse.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^189.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.9.5",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.1",
+    "pdfkit": "^0.20.2",
+    "socket.io": "^4.8.1"
+  }
+}

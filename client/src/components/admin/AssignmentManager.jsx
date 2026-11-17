@@ -1,0 +1,330 @@
+import { useEffect, useState } from 'react';
+import { CalendarClock, ClipboardList, Eye, Pencil, Plus, Send, Trash2, Users, X } from 'lucide-react';
+import {
+  createAssignment,
+  deleteAssignment,
+  getAdminAssignments,
+  toErrorMessage,
+  updateAssignment,
+} from '../../api/client';
+import Button from '../common/Button.jsx';
+import Input from '../common/Input.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { EmptyRow, LoadingRow, Panel, Pill, formatDate, useFlash } from './ui.jsx';
+
+/**
+ * Admin CRUD for assignments — tasks with a due date, set per course.
+ * A task for a course is only shown to (and announced to) the learners
+ * enrolled in that course, plus Full Access learners; "All learners" reaches
+ * everyone. Publishing one notifies its learners.
+ */
+
+const EMPTY = { title: '', description: '', courseId: '', dueDate: '', maxScore: 100, published: true };
+
+/** datetime-local wants local "YYYY-MM-DDTHH:mm"; toISOString would shift by the offset. */
+function toLocalInput(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * What publishing did, in both channels — the in-app bell and email.
+ * Returns { tone, message }: a warning when the email channel did not get
+ * through, so the admin knows learners who are signed out were not reached.
+ */
+function publishOutcome(saved, prefix) {
+  const inApp = `${plural(saved.notified || 0, 'learner')} notified in the app`;
+  const email = saved.email;
+  if (!email || email.status === 'no_recipients') return { tone: 'success', message: `${prefix} — ${inApp}.` };
+
+  switch (email.status) {
+    case 'sent':
+      return { tone: 'success', message: `${prefix} — ${inApp} and ${plural(email.sent, 'email')} sent.` };
+    case 'partial':
+      return {
+        tone: 'warning',
+        message: `${prefix} — ${inApp}. ${plural(email.sent, 'email')} sent, ${email.failed} failed${email.error ? `: ${email.error}` : '.'}`,
+      };
+    case 'not_configured':
+      return {
+        tone: 'warning',
+        message: `${prefix} — ${inApp}, but no emails were sent: email is not set up yet (LMS settings → Email).`,
+      };
+    case 'disabled':
+      return { tone: 'success', message: `${prefix} — ${inApp}. Task emails are switched off in LMS settings → Email.` };
+    default:
+      return {
+        tone: 'warning',
+        message: `${prefix} — ${inApp}, but the emails could not be sent${email.error ? `: ${email.error}` : '.'}`,
+      };
+  }
+}
+
+export default function AssignmentManager({ courses = [], onChanged, onViewSubmissions }) {
+  const { isSuperAdmin } = useAuth();
+  const flash = useFlash();
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState(EMPTY);
+  const [editingId, setEditingId] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [courseFilter, setCourseFilter] = useState('');
+
+  const shown = assignments.filter((a) =>
+    !courseFilter ? true : courseFilter === 'all' ? !a.courseId : a.courseId?._id === courseFilter
+  );
+  const taskCountFor = (courseId) => assignments.filter((a) => a.courseId?._id === courseId).length;
+
+  const load = () =>
+    getAdminAssignments()
+      .then(setAssignments)
+      .catch((err) => flash.error(toErrorMessage(err)))
+      .finally(() => setLoading(false));
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
+  }, []);
+
+  const set = (key) => (event) =>
+    setForm((prev) => ({ ...prev, [key]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
+
+  const startEdit = (assignment) => {
+    setEditingId(assignment.id);
+    setForm({
+      title: assignment.title,
+      description: assignment.description || '',
+      courseId: assignment.courseId?._id || '',
+      dueDate: toLocalInput(assignment.dueDate),
+      maxScore: assignment.maxScore || 100,
+      published: assignment.published,
+    });
+    setOpen(true);
+  };
+
+  const reset = () => {
+    setForm(EMPTY);
+    setEditingId(null);
+    setOpen(false);
+  };
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    const payload = {
+      ...form,
+      dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : '',
+      courseId: form.courseId || '',
+    };
+    try {
+      const saved = editingId ? await updateAssignment(editingId, payload) : await createAssignment(payload);
+      // Announced now (a new published task, or a draft just published).
+      if (saved.email || saved.notified) {
+        const { tone, message } = publishOutcome(saved, `"${saved.title}" published`);
+        flash[tone](message);
+      } else {
+        flash.success(`"${saved.title}" saved${saved.published ? '' : ' as a draft'}.`);
+      }
+      reset();
+      await load();
+      onChanged?.();
+    } catch (err) {
+      flash.error(toErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const publish = async (assignment) => {
+    try {
+      const saved = await updateAssignment(assignment.id, { published: true });
+      const { tone, message } = publishOutcome(saved, 'Published');
+      flash[tone](message);
+      load();
+    } catch (err) {
+      flash.error(toErrorMessage(err));
+    }
+  };
+
+  const remove = async (assignment) => {
+    if (!window.confirm(`Delete "${assignment.title}"? Submissions already made are kept.`)) return;
+    try {
+      await deleteAssignment(assignment.id);
+      setAssignments((prev) => prev.filter((a) => a.id !== assignment.id));
+      flash.success('Task deleted.');
+    } catch (err) {
+      flash.error(toErrorMessage(err));
+    }
+  };
+
+  return (
+    <Panel
+      icon={CalendarClock}
+      title="Tasks & assignments"
+      description="Set work with a due date. Learners are notified the moment it is published."
+      actions={
+        isSuperAdmin &&
+        !open && (
+          <Button size="sm" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            New task
+          </Button>
+        )
+      }
+      bodyClassName=""
+    >
+      {flash.node && <div className="px-5 pt-4 sm:px-6">{flash.node}</div>}
+
+      {open && (
+        <form onSubmit={onSubmit} className="grid gap-4 border-b border-ink-100 bg-ink-50/50 px-5 py-5 sm:px-6 lg:grid-cols-2">
+          <Input label="Task title" required value={form.title} onChange={set('title')} maxLength={160} placeholder="e.g. Week 3 — Build a sales dashboard" />
+          <div>
+            <label className="field-label" htmlFor="assignment-course">Assign to learners enrolled in</label>
+            <select id="assignment-course" className="field-input" value={form.courseId} onChange={set('courseId')}>
+              <option value="">All learners (every course)</option>
+              {courses.map((c) => (
+                <option key={c._id} value={c._id}>{c.title}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-ink-500">
+              {form.courseId
+                ? 'Only learners enrolled in this course (and Full Access learners) will see this task and be notified.'
+                : 'Every learner will see this task, whatever course they are in.'}
+            </p>
+          </div>
+          <Input label="Due date" type="datetime-local" value={form.dueDate} onChange={set('dueDate')} hint="Shown to learners and in their notification." />
+          <Input label="Maximum score" type="number" min={1} max={1000} value={form.maxScore} onChange={set('maxScore')} />
+          <div className="lg:col-span-2">
+            <label className="field-label" htmlFor="assignment-description">Instructions</label>
+            <textarea
+              id="assignment-description"
+              className="field-input min-h-[90px] resize-y"
+              value={form.description}
+              onChange={set('description')}
+              maxLength={4000}
+              placeholder="What to build, what to submit, how it will be marked…"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-[13px] text-ink-700 lg:col-span-2">
+            <input type="checkbox" className="h-4 w-4 rounded border-primary-200 text-primary-600" checked={form.published} onChange={set('published')} />
+            Publish now and notify learners
+          </label>
+          <div className="flex gap-2 lg:col-span-2">
+            <Button type="submit" size="sm" loading={saving}>
+              <Send className="h-4 w-4" aria-hidden="true" />
+              {editingId ? 'Save task' : form.published ? 'Publish task' : 'Save draft'}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={reset}>
+              <X className="h-4 w-4" aria-hidden="true" />
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {!loading && assignments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-5 py-3 sm:px-6">
+          <label htmlFor="assignment-filter" className="text-[12px] font-medium text-ink-600">Show tasks for</label>
+          <select id="assignment-filter" className="admin-field w-auto min-w-[14rem]" value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
+            <option value="">All courses ({assignments.length})</option>
+            {courses.map((c) => (
+              <option key={c._id} value={c._id}>{c.title} ({taskCountFor(c._id)})</option>
+            ))}
+            <option value="all">All-learner tasks ({assignments.filter((a) => !a.courseId).length})</option>
+          </select>
+        </div>
+      )}
+
+      {loading ? (
+        <LoadingRow label="Loading tasks…" />
+      ) : assignments.length === 0 ? (
+        <EmptyRow icon={ClipboardList} title="No tasks yet" description="Create one to give learners work with a due date." />
+      ) : shown.length === 0 ? (
+        <EmptyRow icon={ClipboardList} title="No tasks for this course yet" description={isSuperAdmin ? 'Use "New task" and pick the course.' : undefined} />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="admin-table min-w-[48rem]">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>For</th>
+                <th>Due</th>
+                <th>Submissions</th>
+                <th>Status</th>
+                {isSuperAdmin && <th className="text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((a) => {
+                const overdue = a.dueDate && new Date(a.dueDate) < new Date();
+                return (
+                  <tr key={a.id}>
+                    <td>
+                      <p className="font-medium text-ink-900">{a.title}</p>
+                      <p className="text-[11.5px] text-ink-400">Max score {a.maxScore}</p>
+                    </td>
+                    <td className="text-[13px]">
+                      <p>{a.courseId?.title || 'All learners'}</p>
+                      {typeof a.audienceCount === 'number' && (
+                        <p className="inline-flex items-center gap-1 text-[11.5px] text-ink-400">
+                          <Users className="h-3 w-3" aria-hidden="true" />
+                          {a.audienceCount} learner{a.audienceCount === 1 ? '' : 's'}
+                        </p>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap text-[13px]">
+                      {a.dueDate ? (
+                        <span className={overdue ? 'font-semibold text-red-600' : ''}>{formatDate(a.dueDate, true)}</span>
+                      ) : (
+                        'No due date'
+                      )}
+                    </td>
+                    <td className="tabular-nums">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {a.submissionCount}
+                        {a.awaitingReview > 0 && <Pill tone="amber">{a.awaitingReview} to review</Pill>}
+                        {a.submissionCount > 0 && onViewSubmissions && (
+                          <button
+                            type="button"
+                            onClick={() => onViewSubmissions(a)}
+                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-semibold text-primary-700 hover:bg-primary-50"
+                          >
+                            <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                            View
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td>{a.published ? <Pill tone="green">Published</Pill> : <Pill tone="gray">Draft</Pill>}</td>
+                    {isSuperAdmin && (
+                      <td>
+                        <div className="flex justify-end gap-1">
+                          {!a.published && (
+                            <Button size="sm" variant="soft" onClick={() => publish(a)}>
+                              Publish
+                            </Button>
+                          )}
+                          <button type="button" onClick={() => startEdit(a)} aria-label={`Edit ${a.title}`} className="rounded-lg p-2 text-primary-600 transition hover:bg-primary-50">
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button type="button" onClick={() => remove(a)} aria-label={`Delete ${a.title}`} className="rounded-lg p-2 text-red-600 transition hover:bg-red-50">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}

@@ -1,0 +1,544 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ *
+ * Design tokens that live outside Tailwind's scale (used by gradients,
+ * decorative meshes and the video player chrome).
+ * ------------------------------------------------------------------ */
+:root {
+  --header-h: 4rem;
+  --sidebar-w: 16rem;
+  --ring-primary: rgba(36, 80, 235, 0.18);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    @apply bg-white font-sans text-[15px] leading-relaxed text-ink-700 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-semibold text-ink-900;
+    text-wrap: balance;
+  }
+
+  /* One consistent, always-visible focus ring across the whole product. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white;
+  }
+
+  ::selection {
+    @apply bg-primary-100 text-primary-900;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Surfaces ------------------------------------------------------- */
+  .card {
+    @apply rounded-card border border-ink-100 bg-white shadow-card;
+  }
+  .card-interactive {
+    @apply card transition duration-300 ease-out hover:-translate-y-1 hover:border-ink-200 hover:shadow-card-hover;
+  }
+
+  /* Sidebar navigation --------------------------------------------- */
+  .sidebar-link {
+    @apply relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-ink-600
+           transition hover:bg-ink-50 hover:text-ink-900;
+  }
+  .sidebar-link-active {
+    @apply bg-primary-50 font-semibold text-primary-700 hover:bg-primary-50 hover:text-primary-700;
+  }
+  .sidebar-link-active::before {
+    content: '';
+    @apply absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary-600;
+  }
+
+  /* Forms ----------------------------------------------------------- */
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-ink-800;
+  }
+  .field-input {
+    @apply w-full rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-sm text-ink-900
+           placeholder:text-ink-400 transition
+           focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20;
+  }
+  .field-error {
+    @apply mt-1.5 text-xs font-medium text-red-600;
+  }
+
+  /* Section rhythm -------------------------------------------------- */
+  .section {
+    @apply py-16 sm:py-20 lg:py-24;
+  }
+  .eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.14em] text-primary-600;
+  }
+
+  /* Admin-authored rich text ---------------------------------------- */
+  /* Shared by the course content editor and the student-facing course
+     description, so what the admin types is what the student sees.
+     Element selectors rather than a typography plugin: the markup comes
+     from the editor's allowlist, so the set of tags here is closed. */
+  .prose-course {
+    @apply text-sm leading-relaxed text-ink-700;
+  }
+  .prose-course > :first-child {
+    @apply mt-0;
+  }
+  .prose-course > :last-child {
+    @apply mb-0;
+  }
+  .prose-course p {
+    @apply my-3;
+  }
+  .prose-course h1,
+  .prose-course h2 {
+    @apply mb-2 mt-5 text-base font-semibold text-ink-900;
+  }
+  .prose-course h3,
+  .prose-course h4 {
+    @apply mb-1.5 mt-4 text-sm font-semibold text-ink-900;
+  }
+  .prose-course ul {
+    @apply my-3 list-disc space-y-1.5 pl-5;
+  }
+  .prose-course ol {
+    @apply my-3 list-decimal space-y-1.5 pl-5;
+  }
+  .prose-course a {
+    @apply font-medium text-primary-700 underline decoration-primary-300 underline-offset-2 hover:text-primary-800;
+  }
+  .prose-course blockquote {
+    @apply my-4 border-l-2 border-primary-200 pl-4 italic text-ink-600;
+  }
+  .prose-course code {
+    @apply rounded bg-ink-100 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-800;
+  }
+  .prose-course pre {
+    @apply my-3 overflow-x-auto rounded-lg bg-ink-900 p-4 text-[13px] text-ink-100;
+  }
+  .prose-course pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .prose-course strong,
+  .prose-course b {
+    @apply font-semibold text-ink-900;
+  }
+  .prose-course hr {
+    @apply my-5 border-ink-100;
+  }
+  .prose-course table {
+    @apply my-4 w-full border-collapse text-left;
+  }
+  .prose-course th,
+  .prose-course td {
+    @apply border border-ink-100 px-3 py-2;
+  }
+  .prose-course th {
+    @apply bg-ink-50 font-semibold text-ink-900;
+  }
+
+  /* Admin panel — blue and white --------------------------------------
+     A blue sidebar and plain white cards; blue marks actions, links and
+     the active page. */
+  .admin-card {
+    @apply rounded-xl border border-ink-100 bg-white;
+  }
+  .admin-sidebar-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-primary-100
+           transition hover:bg-white/10 hover:text-white;
+  }
+  .admin-sidebar-link-active {
+    @apply bg-white/15 font-semibold text-white hover:bg-white/15 hover:text-white;
+  }
+  .admin-table {
+    @apply w-full text-left text-sm;
+  }
+  .admin-table thead th {
+    @apply whitespace-nowrap border-b border-ink-100 bg-ink-50/60 px-4 py-2.5 text-[12px] font-medium
+           text-ink-500 first:pl-6 last:pr-6;
+  }
+  .admin-table tbody td {
+    @apply border-t border-ink-100 px-4 py-3 align-middle text-ink-700 first:pl-6 last:pr-6;
+  }
+  .admin-table tbody tr:first-child td {
+    @apply border-t-0;
+  }
+  .admin-table tbody tr {
+    @apply transition-colors hover:bg-ink-50/50;
+  }
+  .admin-field {
+    @apply rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900
+           placeholder:text-ink-400 transition focus:border-primary-500 focus:outline-none
+           focus:ring-2 focus:ring-primary-500/20;
+  }
+}
+
+@layer utilities {
+  /* Soft blue-tinted mesh used behind the hero and CTA bands. */
+  .bg-mesh {
+    background-image:
+      radial-gradient(42rem 28rem at 84% -10%, rgba(96, 146, 250, 0.16), transparent 60%),
+      radial-gradient(34rem 24rem at 2% 8%, rgba(36, 80, 235, 0.09), transparent 62%);
+  }
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(15, 27, 51, 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(15, 27, 51, 0.04) 1px, transparent 1px);
+    background-size: 3rem 3rem;
+  }
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.ink.200') transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-ink-200;
+  }
+  /* Still scrolls (wheel, touch, keyboard) — just without a visible bar. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Custom range inputs for the video player controls */
+.player-range {
+  @apply h-1 w-full cursor-pointer appearance-none rounded-full bg-white/25;
+}
+.player-range::-webkit-slider-thumb {
+  @apply h-3 w-3 appearance-none rounded-full bg-white shadow;
+}
+.player-range::-moz-range-thumb {
+  @apply h-3 w-3 rounded-full border-0 bg-white;
+}
+
+/* Certificate printing ------------------------------------------------
+   "Download" on a certificate opens the browser's print dialogue, where
+   "Save as PDF" is the default destination on every current platform. The
+   rules below strip the dashboard chrome so only the certificate face
+   lands on the page, and force the colours to print rather than being
+   dropped as background graphics.
+
+   `data-print-root` is set on the certificate being printed; see
+   pages/Certificates.jsx. */
+@media print {
+  body.printing-certificate * {
+    visibility: hidden;
+  }
+  body.printing-certificate [data-print-root],
+  body.printing-certificate [data-print-root] * {
+    visibility: visible;
+  }
+  body.printing-certificate [data-print-root] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    max-width: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  body.printing-certificate [data-print-hide] {
+    display: none !important;
+  }
+  /* Hidden content still takes up room and would print as blank extra
+     pages, so drop everything that is neither the certificate nor one of
+     its ancestors. */
+  body.printing-certificate *:not(:has([data-print-root])):not([data-print-root]):not([data-print-root] *) {
+    display: none !important;
+  }
+}
+
+/* Certificate template ------------------------------------------------
+   The Analytics Avenue completion certificate (components/certificates/
+   CertificateFace.jsx). Sized entirely in container units so it scales as
+   one piece; the page keeps the artwork's 1550 × 1000 ratio. */
+.aa-cert {
+  container-type: inline-size;
+  width: 100%;
+}
+.aa-cert__page {
+  position: relative;
+  aspect-ratio: 1550 / 1000;
+  overflow: hidden;
+  color: #1c2b4b;
+  font-family: Inter, 'Segoe UI', Arial, sans-serif;
+  text-align: center;
+}
+.aa-cert__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.aa-cert__watermark {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%) rotate(-20deg);
+  font-size: 13cqw;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: rgba(21, 87, 201, 0.06);
+  pointer-events: none;
+}
+
+.aa-cert__brand {
+  position: absolute;
+  left: 3.6%;
+  top: 4%;
+  display: flex;
+  align-items: flex-start;
+  gap: 1cqw;
+  text-align: left;
+}
+.aa-cert__logo {
+  height: 8.6cqw;
+  width: auto;
+}
+.aa-cert__company {
+  margin-top: 0.35cqw;
+  padding-bottom: 0.45cqw;
+  border-bottom: 0.13cqw solid #1557c9;
+  font-family: Merriweather, Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: 2.85cqw;
+  line-height: 1.1;
+  color: #0d2a6b;
+  white-space: nowrap;
+}
+.aa-cert__company-first {
+  color: #1557c9;
+}
+.aa-cert__tagline {
+  max-width: 16.5cqw;
+  margin-top: 0.55cqw;
+  font-size: 1.2cqw;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1.3;
+  color: #0d2a6b;
+}
+
+.aa-cert__seal {
+  position: absolute;
+  left: 11.4%;
+  top: 60.5%;
+  width: 13.5%;
+}
+
+.aa-cert__body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 13.4%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.aa-cert__title {
+  font-family: Merriweather, Georgia, 'Times New Roman', serif;
+  font-weight: 900;
+  font-size: 4.1cqw;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0d3a9e;
+}
+.aa-cert__subtitle {
+  display: flex;
+  align-items: center;
+  gap: 1.3cqw;
+  margin-top: 0.2cqw;
+  font-family: Merriweather, Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: 2.85cqw;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: #0d3a9e;
+}
+.aa-cert__subtitle-text {
+  letter-spacing: 0.2em;
+  /* letter-spacing trails the last letter; pull it back so the word centres */
+  margin-right: -0.2em;
+}
+
+/* Thin rules with diamond ends, beside the subtitle and the name. */
+.aa-cert__rule {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 8cqw;
+  height: 0.13cqw;
+  background: #1557c9;
+}
+.aa-cert__rule--long {
+  width: 13.5cqw;
+}
+.aa-cert__rule::before,
+.aa-cert__rule::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0.55cqw;
+  height: 0.55cqw;
+  background: #1557c9;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.aa-cert__rule::before {
+  left: 0;
+}
+.aa-cert__rule::after {
+  left: 100%;
+}
+.aa-cert__rule--end::before,
+.aa-cert__rule--start::after {
+  display: none;
+}
+
+.aa-cert__certify {
+  margin-top: 2.3cqw;
+  font-size: 1.66cqw;
+  line-height: 1.4;
+}
+.aa-cert__name-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.4cqw;
+  width: 100%;
+  margin-top: 1cqw;
+}
+.aa-cert__name {
+  font-family: Merriweather, Georgia, 'Times New Roman', serif;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: #0e3fa3;
+}
+.aa-cert__completed {
+  margin-top: 0.9cqw;
+  font-size: 1.42cqw;
+  line-height: 1.4;
+}
+.aa-cert__course {
+  max-width: 62cqw;
+  margin-top: 0.3cqw;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #1557c9;
+}
+.aa-cert__course-label {
+  margin-top: 0.1cqw;
+  font-size: 1.55cqw;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.3;
+}
+.aa-cert__offered {
+  margin-top: 0.9cqw;
+  font-size: 1.47cqw;
+  line-height: 1.4;
+}
+.aa-cert__offered strong {
+  font-weight: 800;
+  color: #1557c9;
+}
+.aa-cert__recognition {
+  max-width: 44cqw;
+  margin-top: 0.7cqw;
+  font-size: 1.27cqw;
+  line-height: 1.5;
+  color: #2a3a5c;
+}
+.aa-cert__block {
+  padding-top: 0.85cqw;
+  border-top: 0.11cqw solid #1557c9;
+}
+.aa-cert__block--date {
+  width: 31.7cqw;
+  margin-top: 2.2cqw;
+}
+.aa-cert__block--issuer {
+  width: 24.2cqw;
+  margin-top: 1.6cqw;
+}
+.aa-cert__month {
+  font-size: 1.3cqw;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+  color: #1557c9;
+}
+.aa-cert__caption {
+  margin-top: 0.3cqw;
+  font-size: 0.98cqw;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  color: #2a3a5c;
+}
+.aa-cert__issuer {
+  font-size: 1.8cqw;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #1557c9;
+}
+.aa-cert__issuer-title {
+  font-size: 1.22cqw;
+  line-height: 1.5;
+}
+.aa-cert__serial {
+  position: absolute;
+  right: 4.6%;
+  bottom: 4.4%;
+  font-size: 0.8cqw;
+  letter-spacing: 0.03em;
+  color: #5b6b8c;
+}
+
+/* Keeps the certificate artwork printing in colour rather than as a white box. */
+[data-print-root] {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@page {
+  size: A4 landscape;
+  margin: 12mm;
+}
