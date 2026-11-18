@@ -10,6 +10,10 @@ const courseAccessSchema = new mongoose.Schema(
     source: { type: String, default: 'manual' },
     // Set when Settings limits access to N days; absent means lifetime access.
     expiresAt: { type: Date },
+    suspended: { type: Boolean, default: false, index: true },
+    suspensionReason: { type: String, default: '' },
+    suspendedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    suspendedAt: { type: Date },
   },
   { timestamps: true }
 );

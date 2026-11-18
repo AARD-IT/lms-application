@@ -1,5 +1,6 @@
 const Assignment = require('../models/Assignment');
 const Course = require('../models/Course');
+const CourseAccess = require('../models/CourseAccess');
 const Submission = require('../models/Submission');
 const activity = require('../services/activityService');
 const { grantedCourseIds, learnerIdsWithAccess } = require('../services/enrolmentService');
@@ -84,11 +85,20 @@ function announcementSummary({ notified, email }) {
 /** GET /api/assignments — open assignments for the courses this learner has. */
 async function listForLearner(req, res, next) {
   try {
-    // Full Access learners get every course's tasks.
+    // Full Access learners get every published course's tasks, unless that course is suspended.
+    const suspendedAccesses = await CourseAccess.find({ studentId: req.user._id, suspended: true }).select('courseId');
+    const suspendedCourseIds = suspendedAccesses.map((a) => a.courseId);
+
     const filter = { published: true };
     if (!req.user.fullAccess) {
       const courseIds = await grantedCourseIds(req.user._id);
       filter.$or = [{ courseId: null }, { courseId: { $exists: false } }, { courseId: { $in: courseIds } }];
+    } else if (suspendedCourseIds.length) {
+      filter.$or = [
+        { courseId: null },
+        { courseId: { $exists: false } },
+        { courseId: { $nin: suspendedCourseIds } },
+      ];
     }
 
     const assignments = await Assignment.find(filter)

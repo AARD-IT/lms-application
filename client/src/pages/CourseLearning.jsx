@@ -84,6 +84,15 @@ export default function CourseLearning() {
     Promise.all([getCourse(courseId), getCourseLessons(courseId), getProgress(lessonId)])
       .then(([courseData, lessonData, progressData]) => {
         if (cancelled) return;
+        if (courseData.isSuspended) {
+          setError(
+            courseData.suspensionReason
+              ? `Your access to this course is suspended: ${courseData.suspensionReason}`
+              : 'Your access to this course is suspended'
+          );
+          setStatus('error');
+          return;
+        }
         setCourse(courseData);
         setLessons(lessonData);
         // Finished lessons restart from the top; unfinished ones resume.

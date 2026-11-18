@@ -107,15 +107,16 @@ export default function CourseDetails() {
 
   const Title = inDashboard ? 'h2' : 'h1';
   const nextLesson = lessons.find((l) => !l.progress?.completed) || lessons[0];
+  const isSuspended = Boolean(course.isSuspended);
   const started = course.progress > 0;
   const complete = course.progress >= 100;
   const saved = isSaved(course._id);
-  const locked = isAuthenticated && course.hasAccess === false;
+  const locked = isAuthenticated && (course.hasAccess === false || isSuspended);
 
   // A locked course the student has already paid for is waiting on the admin
   // to confirm the payment, which is a very different message from "you
   // need to enrol".
-  const awaitingPayment = locked && course.enrollmentStatus === 'pending';
+  const awaitingPayment = locked && !isSuspended && course.enrollmentStatus === 'pending';
 
   const facts = [
     { icon: BookOpen, label: `${course.lessonCount} lessons` },
@@ -149,7 +150,9 @@ export default function CourseDetails() {
       : 0;
 
   /* The primary action changes with the student's relationship to the course. */
-  const primaryAction = !isAuthenticated
+  const primaryAction = isSuspended
+    ? null
+    : !isAuthenticated
     ? // Signed-out visitors register first, then come back to this course.
       { to: `/register?next=${encodeURIComponent(`/courses/${course._id}/enrol`)}`, label: 'Enrol Now' }
     : awaitingPayment
@@ -214,6 +217,34 @@ export default function CourseDetails() {
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem] lg:items-start">
         {/* --- Main column -------------------------------------------- */}
         <div className="min-w-0 space-y-6">
+          {isSuspended && (
+            <div className="rounded-xl border border-red-200 bg-red-50/80 p-5 shadow-sm">
+              <div className="flex items-start gap-3.5">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-red-100 text-red-700">
+                  <Lock className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-base font-bold text-red-950">Course Access Temporarily Locked</h3>
+                  <p className="text-sm leading-relaxed text-red-800">
+                    Your access to this course is currently on hold.
+                  </p>
+                  <p className="text-sm leading-relaxed text-red-800">
+                    Please complete your pending registration or payment to unlock the course and continue learning. If you have already completed the required steps, please contact the administration team for assistance.
+                  </p>
+                  {course.suspensionReason && (
+                    <div className="rounded-lg border border-red-200 bg-white/90 p-3 text-xs text-red-950">
+                      <span className="font-semibold">Reason: </span>
+                      {course.suspensionReason}
+                    </div>
+                  )}
+                  <div className="pt-1">
+                    <Badge tone="error" icon={Lock}>Status: Access Suspended</Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
 
           {tab === 'overview' && (
@@ -293,8 +324,17 @@ export default function CourseDetails() {
               </div>
               {locked ? (
                 <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-                  <Lock className="h-8 w-8 text-ink-300" aria-hidden="true" />
-                  {awaitingPayment ? (
+                  <Lock className={`h-8 w-8 ${isSuspended ? 'text-red-500' : 'text-ink-300'}`} aria-hidden="true" />
+                  {isSuspended ? (
+                    <div className="space-y-1">
+                      <p className="max-w-sm text-sm font-semibold text-red-950">
+                        Course Access Temporarily Locked
+                      </p>
+                      <p className="max-w-md text-xs text-ink-600">
+                        Your access to this course is currently on hold. Lessons and learning materials are locked while suspended.
+                      </p>
+                    </div>
+                  ) : awaitingPayment ? (
                     <p className="max-w-sm text-sm text-ink-600">
                       The full lesson list unlocks once your payment is confirmed.
                     </p>
@@ -352,7 +392,29 @@ export default function CourseDetails() {
             </div>
 
             <div className="p-5">
-              {awaitingPayment ? (
+              {isSuspended ? (
+                <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-950">
+                  <div className="flex items-center gap-2 font-bold text-red-900">
+                    <Lock className="h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
+                    Course Access Temporarily Locked
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-red-800">
+                    Your access to this course is currently on hold.
+                  </p>
+                  <p className="mt-1.5 text-[12px] leading-relaxed text-red-700">
+                    Please complete your pending registration or payment to unlock the course and continue learning. If you have already completed the required steps, please contact the administration team for assistance.
+                  </p>
+                  {course.suspensionReason && (
+                    <div className="mt-2.5 rounded-lg border border-red-200 bg-white/90 p-2.5 text-[11.5px] text-red-900">
+                      <span className="font-semibold">Reason: </span>
+                      {course.suspensionReason}
+                    </div>
+                  )}
+                  <div className="mt-3">
+                    <Badge tone="error" icon={Lock}>Status: Access Suspended</Badge>
+                  </div>
+                </div>
+              ) : awaitingPayment ? (
                 <div className="mb-5 flex items-start gap-2.5 rounded-lg bg-amber-50 p-3 text-[13px] font-medium text-amber-800">
                   <Hourglass className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>
@@ -417,6 +479,11 @@ export default function CourseDetails() {
                   {primaryAction.label}
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
+              ) : isSuspended ? (
+                <Button size="lg" fullWidth disabled variant="danger">
+                  <Lock className="h-4 w-4" aria-hidden="true" />
+                  Access Suspended
+                </Button>
               ) : (
                 <Button size="lg" fullWidth disabled>
                   <Hourglass className="h-4 w-4" aria-hidden="true" />
@@ -426,7 +493,7 @@ export default function CourseDetails() {
 
               {/* The package contents, repeated here so the figure and what
                   it buys sit together at the point of decision. */}
-              {locked && !awaitingPayment && (
+              {locked && !awaitingPayment && !isSuspended && (
                 <ul className="mt-5 space-y-2 border-t border-ink-100 pt-5">
                   {features.slice(0, 5).map((feature) => (
                     <li key={feature} className="flex gap-2 text-[13px] leading-relaxed text-ink-700">

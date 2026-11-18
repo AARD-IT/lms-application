@@ -22,7 +22,12 @@ function requireCourseAccess(resolveCourseId) {
           error:
             access.reason === 'expired'
               ? 'Your access to this course has expired'
+              : access.reason === 'suspended'
+              ? 'Your access to this course is suspended'
               : 'You do not have access to this course',
+          code: access.reason === 'suspended' ? 'COURSE_SUSPENDED' : undefined,
+          reason: access.reason,
+          suspensionReason: access.suspensionReason || undefined,
         });
       }
 

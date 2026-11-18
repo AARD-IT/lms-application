@@ -56,8 +56,10 @@ async function listLearners(req, res, next) {
     const scopedCourse = courseId && mongoose.isValidObjectId(courseId) ? String(courseId) : null;
     if (courseId && !scopedCourse) return res.json([]);
     if (scopedCourse) {
-      const grants = await CourseAccess.find({ courseId: scopedCourse, active: true }).select('studentId expiresAt active');
-      and.push({ $or: [{ _id: { $in: grants.filter(isGrantLive).map((g) => g.studentId) } }, { fullAccess: true }] });
+      const grants = await CourseAccess.find({ courseId: scopedCourse, active: true }).select('studentId expiresAt active suspended');
+      const live = grants.filter(isGrantLive).map((g) => g.studentId);
+      const suspended = grants.filter((g) => g.suspended).map((g) => g.studentId);
+      and.push({ $or: [{ _id: { $in: live } }, { fullAccess: true, _id: { $nin: suspended } }] });
     }
     if (access === 'full') filter.fullAccess = true;
     if (and.length) filter.$and = and;
@@ -66,7 +68,7 @@ async function listLearners(req, res, next) {
     const ids = learners.map((l) => l._id);
 
     const [grants, enrollments, submissions, progressRows, lessonCounts, assignments, materialCounts] = await Promise.all([
-      CourseAccess.find({ studentId: { $in: ids }, active: true }).select('studentId courseId expiresAt active'),
+      CourseAccess.find({ studentId: { $in: ids }, active: true }).select('studentId courseId expiresAt active suspended'),
       Enrollment.find({ studentId: { $in: ids }, amount: { $gt: 0 } }).select('studentId status amount'),
       Submission.find({ studentId: { $in: ids } }).select('studentId assignmentId courseId status'),
       // Progress.studentId is a string column, so match on the string form.
@@ -133,13 +135,16 @@ async function listLearners(req, res, next) {
       const key = String(learner._id);
       const pay = payments.get(key) || { pending: 0, failed: 0, paidTotal: 0, paidCount: 0 };
       const granted = coursesBy.get(key) || new Set();
+      const suspendedForStudent = new Set(
+        grants.filter((g) => String(g.studentId) === key && g.suspended).map((g) => String(g.courseId))
+      );
       const progressRowsFor = progressBy.get(key) || new Map();
 
       // The courses progress is measured over: the filtered course, or every
-      // course the learner holds (for Full Access, the ones they have started).
+      // course the learner holds (for Full Access, the ones they have started, excluding suspended).
       let scope;
       if (scopedCourse) scope = [scopedCourse];
-      else if (learner.fullAccess) scope = [...new Set([...granted, ...progressRowsFor.keys()])];
+      else if (learner.fullAccess) scope = [...new Set([...granted, ...progressRowsFor.keys()])].filter((c) => !suspendedForStudent.has(c));
       else scope = [...granted];
 
       let totalLessons = 0;
@@ -171,6 +176,7 @@ async function listLearners(req, res, next) {
       const applicable = assignments.filter((a) => {
         const course = a.courseId ? String(a.courseId) : null;
         if (scopedCourse) return course === scopedCourse;
+        if (course && suspendedForStudent.has(course)) return false;
         return !course || learner.fullAccess || granted.has(course);
       });
       const mine = submissionsBy.get(key) || [];
@@ -297,16 +303,30 @@ async function getLearner(req, res, next) {
         .filter((g) => g.courseId)
         .map((grant) =>
           describe(grant.courseId, {
-            // A removed or expired grant is still covered while Full Access is on.
-            live: isGrantLive(grant) || (learner.fullAccess && grant.courseId.published !== false),
+            // A removed or expired grant is still covered while Full Access is on, unless explicitly suspended.
+            live: !grant.suspended && (isGrantLive(grant) || (learner.fullAccess && grant.courseId.published !== false)),
             active: grant.active,
+            suspended: Boolean(grant.suspended),
+            suspensionReason: grant.suspensionReason || '',
+            suspendedAt: grant.suspendedAt || null,
+            suspendedBy: grant.suspendedBy || null,
             expiresAt: grant.expiresAt || null,
             source: grant.source || 'manual',
             grantedAt: grant.createdAt,
           })
         ),
       ...fullAccessCourses.map((course) =>
-        describe(course, { live: true, active: true, expiresAt: null, source: 'full', grantedAt: learner.fullAccessGrantedAt })
+        describe(course, {
+          live: true,
+          active: true,
+          suspended: false,
+          suspensionReason: '',
+          suspendedAt: null,
+          suspendedBy: null,
+          expiresAt: null,
+          source: 'full',
+          grantedAt: learner.fullAccessGrantedAt,
+        })
       ),
     ].sort((a, b) => Number(b.live) - Number(a.live) || new Date(b.grantedAt || 0) - new Date(a.grantedAt || 0));
 
@@ -516,6 +536,156 @@ async function unenrolLearner(req, res, next) {
   }
 }
 
+/**
+ * POST /api/admin/learners/:id/courses/:courseId/suspend
+ * Body: { reason: string }
+ *
+ * Suspends access to a specific course for a learner.
+ * Course-specific: Does NOT update User.status or suspend learner's entire LMS account.
+ */
+async function suspendCourseAccess(req, res, next) {
+  try {
+    const learnerId = req.params.id || req.body?.learnerId || req.body?.studentId;
+    const courseId = req.params.courseId || req.body?.courseId;
+    const { reason } = req.body || {};
+
+    if (!learnerId || !mongoose.isValidObjectId(learnerId)) {
+      return res.status(400).json({ error: 'Valid learner ID is required' });
+    }
+    if (!courseId || !mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ error: 'Valid course ID is required' });
+    }
+
+    const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!trimmedReason) {
+      return res.status(400).json({ error: 'Suspension reason is required' });
+    }
+
+    const [learner, course] = await Promise.all([
+      User.findOne({ _id: learnerId, ...LEARNER_FILTER }),
+      Course.findById(courseId),
+    ]);
+
+    if (!learner) return res.status(404).json({ error: 'Learner not found' });
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+
+    let access = await CourseAccess.findOne({ studentId: learner._id, courseId: course._id });
+
+    // If learner has fullAccess, they may not have an explicit CourseAccess record yet.
+    // Create one so the course suspension can be enforced and recorded.
+    if (!access && learner.fullAccess) {
+      access = new CourseAccess({
+        studentId: learner._id,
+        courseId: course._id,
+        active: true,
+        source: 'full',
+      });
+    }
+
+    if (!access) {
+      return res.status(404).json({ error: 'Course access record not found for this learner' });
+    }
+
+    access.suspended = true;
+    access.suspensionReason = trimmedReason.slice(0, 500);
+    access.suspendedBy = req.user._id;
+    access.suspendedAt = new Date();
+    await access.save();
+
+    await activity.log(req, {
+      category: 'enrolment',
+      action: 'course.suspended',
+      summary: `Suspended ${learner.name}'s access to "${course.title}". Reason: ${access.suspensionReason}`,
+      entityType: 'user',
+      entityId: learner._id,
+      meta: {
+        courseId: String(course._id),
+        courseTitle: course.title,
+        reason: access.suspensionReason,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Course access to "${course.title}" suspended for ${learner.name}.`,
+      access: {
+        courseId: course._id,
+        courseTitle: course.title,
+        suspended: true,
+        suspensionReason: access.suspensionReason,
+        suspendedAt: access.suspendedAt,
+        suspendedBy: access.suspendedBy,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/admin/learners/:id/courses/:courseId/reactivate
+ *
+ * Reactivates access to the selected course for the learner.
+ * Clears suspension reason and suspension metadata; preserves payment and progress records.
+ */
+async function reactivateCourseAccess(req, res, next) {
+  try {
+    const learnerId = req.params.id || req.body?.learnerId || req.body?.studentId;
+    const courseId = req.params.courseId || req.body?.courseId;
+
+    if (!learnerId || !mongoose.isValidObjectId(learnerId)) {
+      return res.status(400).json({ error: 'Valid learner ID is required' });
+    }
+    if (!courseId || !mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ error: 'Valid course ID is required' });
+    }
+
+    const [learner, course] = await Promise.all([
+      User.findOne({ _id: learnerId, ...LEARNER_FILTER }),
+      Course.findById(courseId),
+    ]);
+
+    if (!learner) return res.status(404).json({ error: 'Learner not found' });
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+
+    const access = await CourseAccess.findOne({ studentId: learner._id, courseId: course._id });
+    if (!access) {
+      return res.status(404).json({ error: 'Course access record not found for this learner' });
+    }
+
+    access.suspended = false;
+    access.suspensionReason = '';
+    access.suspendedBy = null;
+    access.suspendedAt = null;
+    access.active = true;
+    await access.save();
+
+    await activity.log(req, {
+      category: 'enrolment',
+      action: 'course.reactivated',
+      summary: `Reactivated ${learner.name}'s access to "${course.title}"`,
+      entityType: 'user',
+      entityId: learner._id,
+      meta: {
+        courseId: String(course._id),
+        courseTitle: course.title,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Course access to "${course.title}" reactivated for ${learner.name}.`,
+      access: {
+        courseId: course._id,
+        courseTitle: course.title,
+        suspended: false,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 /** A readable one-time password: no 0/O/1/l look-alikes. */
 function temporaryPassword() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -585,6 +755,8 @@ module.exports = {
   setLearnerStatus,
   enrolLearner,
   unenrolLearner,
+  suspendCourseAccess,
+  reactivateCourseAccess,
   resetUserPassword,
   temporaryPassword,
 };

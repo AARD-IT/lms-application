@@ -92,6 +92,10 @@ router.patch('/admin/learners/:id/full-access', ...superAdmin, learnerController
 router.put('/admin/learners/:id/materials', ...superAdmin, learnerController.setLearnerMaterials);
 router.post('/admin/learners/:id/enrol', ...superAdmin, learnerController.enrolLearner);
 router.delete('/admin/learners/:id/enrol/:courseId', ...superAdmin, learnerController.unenrolLearner);
+router.post('/admin/learners/:id/courses/:courseId/suspend', ...superAdmin, learnerController.suspendCourseAccess);
+router.post('/admin/learners/:id/courses/:courseId/reactivate', ...superAdmin, learnerController.reactivateCourseAccess);
+router.post('/admin/learners/:id/suspend-course', ...superAdmin, learnerController.suspendCourseAccess);
+router.post('/admin/learners/:id/reactivate-course', ...superAdmin, learnerController.reactivateCourseAccess);
 router.post('/admin/users/:id/reset-password', ...superAdmin, learnerController.resetUserPassword);
 
 // --- admin: per-student course access (used by the notification composer) ---

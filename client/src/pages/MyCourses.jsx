@@ -43,9 +43,12 @@ export default function MyCourses() {
 
   usePageMeta('My Courses', 'Everything you are enrolled in, in one place.');
 
-  // Only courses the admin has actually granted — everything else lives in
-  // the Browse Courses catalogue instead.
-  const courses = useMemo(() => allCourses.filter((c) => c.hasAccess !== false), [allCourses]);
+  // Courses the learner has active access to, or courses that are enrolled but temporarily suspended.
+  // Everything else lives in the Browse Courses catalogue instead.
+  const courses = useMemo(
+    () => allCourses.filter((c) => c.hasAccess !== false || c.isSuspended),
+    [allCourses]
+  );
 
   const counts = useMemo(() => {
     const tally = { all: courses.length, 'in-progress': 0, completed: 0, 'not-started': 0 };
