@@ -209,6 +209,10 @@ export const enrolLearner = (id, courseId) =>
   api.post(`/admin/learners/${id}/enrol`, { courseId }).then((r) => r.data);
 export const unenrolLearner = (id, courseId) =>
   api.delete(`/admin/learners/${id}/enrol/${courseId}`).then((r) => r.data);
+export const suspendCourseAccess = (learnerId, courseId, reason) =>
+  api.post(`/admin/learners/${learnerId}/courses/${courseId}/suspend`, { reason }).then((r) => r.data);
+export const reactivateCourseAccess = (learnerId, courseId) =>
+  api.post(`/admin/learners/${learnerId}/courses/${courseId}/reactivate`).then((r) => r.data);
 /** Full Access: every course and material, including courses added later. */
 export const setLearnerFullAccess = (id, enabled) =>
   api.patch(`/admin/learners/${id}/full-access`, { enabled }).then((r) => r.data);

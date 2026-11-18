@@ -26,7 +26,6 @@ async function decorateCourses(courses, student) {
   const courseIds = courses.map((c) => c._id);
   const isAdmin = student?.role === 'admin';
   const hasFullAccess = Boolean(student?.fullAccess);
-  const needsGrants = student && !isAdmin && !hasFullAccess;
 
   const [lessonCounts, progressRows, accessRows, materialRows, reviewStats] = await Promise.all([
     Lesson.aggregate([
@@ -34,10 +33,10 @@ async function decorateCourses(courses, student) {
       { $group: { _id: '$courseId', count: { $sum: 1 } } },
     ]),
     student ? Progress.find({ studentId: student.id, courseId: { $in: courseIds } }).lean() : [],
-    needsGrants
-      ? CourseAccess.find({ studentId: student.id, courseId: { $in: courseIds }, active: true }).lean()
+    student
+      ? CourseAccess.find({ studentId: student.id, courseId: { $in: courseIds } }).lean()
       : [],
-    needsGrants ? ResourceAccess.distinct('courseId', { studentId: student.id, courseId: { $in: courseIds } }) : [],
+    student && !isAdmin ? ResourceAccess.distinct('courseId', { studentId: student.id, courseId: { $in: courseIds } }) : [],
     Review.aggregate([
       { $match: { courseId: { $in: courseIds }, hidden: false } },
       { $group: { _id: '$courseId', average: { $avg: '$rating' }, count: { $sum: 1 } } },
@@ -53,14 +52,28 @@ async function decorateCourses(courses, student) {
     const key = String(row.courseId);
     completedByCourse.set(key, (completedByCourse.get(key) || 0) + 1);
   }
-  // Expired grants (Settings → access duration) no longer count as access.
-  const accessByCourse = new Set(accessRows.filter(isGrantLive).map((r) => String(r.courseId)));
+  const accessByCourse = new Map(accessRows.map((r) => [String(r.courseId), r]));
 
   return courses.map((course) => {
     const key = String(course._id);
     const lessonCount = countByCourse.get(key) || 0;
     const completed = completedByCourse.get(key) || 0;
-    const accessVia = isAdmin ? 'staff' : hasFullAccess ? 'full' : accessByCourse.has(key) ? 'grant' : null;
+    const grant = accessByCourse.get(key);
+    const isSuspended = Boolean(grant?.suspended);
+    const suspensionReason = isSuspended ? (grant.suspensionReason || '') : '';
+    const suspendedAt = isSuspended ? (grant.suspendedAt || null) : null;
+
+    let accessVia = null;
+    if (isSuspended) {
+      accessVia = null;
+    } else if (isAdmin) {
+      accessVia = 'staff';
+    } else if (hasFullAccess) {
+      accessVia = 'full';
+    } else if (grant && isGrantLive(grant)) {
+      accessVia = 'grant';
+    }
+
     const reviews = reviewsByCourse.get(key);
     return {
       ...course.toJSON(),
@@ -70,6 +83,9 @@ async function decorateCourses(courses, student) {
       progress: lessonCount ? Math.round((completed / lessonCount) * 100) : 0,
       hasAccess: Boolean(accessVia),
       accessVia,
+      isSuspended,
+      suspensionReason,
+      suspendedAt,
       hasSelectedMaterials: !accessVia && materialCourses.has(key),
     };
   });

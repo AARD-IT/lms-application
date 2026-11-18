@@ -4,6 +4,7 @@ const Submission = require('../models/Submission');
 const User = require('../models/User');
 const activity = require('../services/activityService');
 const certificateService = require('../services/certificateService');
+const { courseAccessFor } = require('../services/enrolmentService');
 const { notifyUser, notifyAdmins } = require('../services/notificationService');
 
 /**
@@ -73,6 +74,13 @@ async function createSubmission(req, res, next) {
       assignment = await Assignment.findOne({ _id: assignmentId, published: true });
       if (!assignment) return res.status(400).json({ error: 'That assignment is no longer open.' });
       if (assignment.courseId) courseId = assignment.courseId;
+    }
+
+    if (courseId) {
+      const access = await courseAccessFor(req.user, courseId);
+      if (!access.allowed && access.reason === 'suspended') {
+        return res.status(403).json({ error: 'Your access to this course is suspended' });
+      }
     }
 
     const submission = await Submission.create({

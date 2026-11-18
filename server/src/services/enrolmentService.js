@@ -19,43 +19,61 @@ const { notifyUser, notifyAdmins, activeLearnerIds } = require('./notificationSe
 
 const rupees = (amount) => `₹${Number(amount || 0).toLocaleString('en-IN')}`;
 
-/** True when the grant exists, is switched on and has not run out. */
+/** True when the grant exists, is switched on, is not suspended, and has not run out. */
 function isGrantLive(grant) {
-  return Boolean(grant?.active) && (!grant.expiresAt || new Date(grant.expiresAt) > new Date());
+  return Boolean(grant?.active) && !grant?.suspended && (!grant.expiresAt || new Date(grant.expiresAt) > new Date());
 }
 
 /**
  * Whether `user` may open a course's lessons, videos and materials.
- * Returns { allowed, via: 'staff' | 'full' | 'grant', reason?: 'none' | 'expired' }.
+ * Returns { allowed, via: 'staff' | 'full' | 'grant', reason?: 'none' | 'expired' | 'suspended', suspensionReason?: string }.
  */
 async function courseAccessFor(user, courseId) {
   if (!user || !courseId) return { allowed: false, reason: 'none' };
   if (user.role === 'admin') return { allowed: true, via: 'staff' };
+
+  // Explicit course-specific suspension check: Full Access must NOT bypass an explicit suspension
+  const grant = await CourseAccess.findOne({ studentId: user._id, courseId });
+  if (grant?.suspended) {
+    return {
+      allowed: false,
+      reason: 'suspended',
+      suspensionReason: grant.suspensionReason || '',
+      suspendedAt: grant.suspendedAt || null,
+      grant,
+    };
+  }
+
   // Full Access covers every published course; drafts stay with staff until released.
   if (user.fullAccess && (await Course.exists({ _id: courseId, published: { $ne: false } }))) {
     return { allowed: true, via: 'full' };
   }
 
-  const grant = await CourseAccess.findOne({ studentId: user._id, courseId });
   if (!grant || !grant.active) return { allowed: false, reason: 'none' };
   if (!isGrantLive(grant)) return { allowed: false, reason: 'expired' };
-  return { allowed: true, via: 'grant' };
+  return { allowed: true, via: 'grant', grant };
 }
 
 /**
  * Every active learner who can currently open a course: live grants plus
- * Full Access accounts. The audience for "new lesson", "new task" and
- * course-specific events.
+ * Full Access accounts (excluding any explicitly suspended for this course).
+ * The audience for "new lesson", "new task" and course-specific events.
  */
 async function learnerIdsWithAccess(courseId) {
-  const grants = await CourseAccess.find({ courseId, active: true }).select('studentId active expiresAt');
+  const grants = await CourseAccess.find({ courseId, active: true }).select('studentId active suspended expiresAt');
   const live = grants.filter(isGrantLive).map((g) => g.studentId);
-  return activeLearnerIds({ $or: [{ _id: { $in: live } }, { fullAccess: true }] });
+  const suspendedLearnerIds = grants.filter((g) => g.suspended).map((g) => g.studentId);
+  return activeLearnerIds({
+    $or: [
+      { _id: { $in: live } },
+      { fullAccess: true, _id: { $nin: suspendedLearnerIds } },
+    ],
+  });
 }
 
 /** Ids of the courses a learner can open through their own grants (not Full Access). */
 async function grantedCourseIds(studentId) {
-  const grants = await CourseAccess.find({ studentId, active: true }).select('courseId active expiresAt');
+  const grants = await CourseAccess.find({ studentId, active: true, suspended: { $ne: true } }).select('courseId active suspended expiresAt');
   return grants.filter(isGrantLive).map((g) => g.courseId);
 }
 
@@ -110,7 +128,16 @@ async function grantCourseAccess(studentId, course, { by, source = 'manual', lea
   const grant = await CourseAccess.findOneAndUpdate(
     { studentId, courseId: course._id },
     {
-      $set: { active: true, source, expiresAt, ...(by ? { grantedBy: by } : {}) },
+      $set: {
+        active: true,
+        suspended: false,
+        suspensionReason: '',
+        suspendedBy: null,
+        suspendedAt: null,
+        source,
+        expiresAt,
+        ...(by ? { grantedBy: by } : {}),
+      },
       $setOnInsert: { studentId, courseId: course._id },
     },
     { new: true, upsert: true }

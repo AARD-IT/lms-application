@@ -32,8 +32,9 @@ async function enrol(req, res, next) {
     const studentId = req.user._id;
 
     // Already has access (Full Access, or a live grant) — nothing to pay for, nothing to queue.
+    // Full Access does not bypass an explicit suspension.
     const existingAccess = await CourseAccess.findOne({ studentId, courseId });
-    if (req.user.fullAccess || isGrantLive(existingAccess)) {
+    if ((req.user.fullAccess && !existingAccess?.suspended) || isGrantLive(existingAccess)) {
       return res.status(200).json({
         status: 'completed',
         alreadyEnrolled: true,

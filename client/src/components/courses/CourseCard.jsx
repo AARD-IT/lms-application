@@ -23,6 +23,7 @@ export default function CourseCard({
 }) {
   const isEnrolled = variant === 'enrolled';
   const isComplete = course.progress >= 100;
+  const isSuspended = Boolean(course.isSuspended);
   const locked = course.hasAccess === false;
   const href = to || (isEnrolled ? `/my-courses/${course._id}` : `/courses/${course._id}`);
 
@@ -55,7 +56,13 @@ export default function CourseCard({
           )}
         </div>
 
-        {locked ? (
+        {isSuspended ? (
+          <span className="absolute bottom-3 left-3">
+            <Badge tone="error" icon={Lock}>
+              Access Suspended
+            </Badge>
+          </span>
+        ) : locked ? (
           <span className="absolute bottom-3 left-3">
             <Badge tone="overlay" icon={Lock}>
               Access restricted
@@ -123,7 +130,12 @@ export default function CourseCard({
         {/* Everything below is pinned to the bottom so cards line up. */}
         <div className="mt-auto pt-4">
           {isEnrolled ? (
-            locked ? (
+            isSuspended ? (
+              <p className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-red-600">
+                <Lock className="h-4 w-4" aria-hidden="true" />
+                Access Suspended
+              </p>
+            ) : locked ? (
               /* Could be an admin revocation or a payment still being
                  confirmed — the course page knows which, so point there
                  rather than guessing at the reason here. */
