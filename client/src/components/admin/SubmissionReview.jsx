@@ -1,18 +1,40 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ClipboardCheck, ExternalLink, Filter, RotateCcw, Search, UserRound, X } from 'lucide-react';
-import { getAdminAssignments, getAllSubmissions, getSubmissionCategories, reviewSubmission, toErrorMessage } from '../../api/client';
+import {
+  Award,
+  BarChart3,
+  Check,
+  CheckCircle2,
+  ClipboardCheck,
+  Database,
+  ExternalLink,
+  FileCode,
+  FileText,
+  Filter,
+  Globe,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Terminal,
+  UserRound,
+  X,
+} from 'lucide-react';
+import {
+  getAdminAssignments,
+  getAllSubmissions,
+  getSubmissionCategories,
+  resolveMediaUrl,
+  reviewSubmission,
+  toErrorMessage,
+} from '../../api/client';
 import Button from '../common/Button.jsx';
 import { AdminTabs, EmptyRow, FilterBar, FilterField, LoadingRow, Panel, Pill, formatDate, useFlash } from './ui.jsx';
 
 /**
  * The review queue for learner task submissions.
  *
- * Filter by learner (name / email search, or "only this learner" on a row),
- * course, task and category; the status tabs show how many submissions each
- * state holds under those filters. Each row carries the Drive link, the
- * learner's description, and a place to mark it Completed or send it back for
- * changes, with feedback and a score. Either outcome notifies the learner.
+ * Supports filtering by domain, student asset/certification, course,
+ * task, category and learner search.
  */
 
 const STATUS_META = {
@@ -30,7 +52,25 @@ const STATUS_TABS = [
   { value: 'needs_revision', label: 'Needs changes' },
 ];
 
-const NO_FILTERS = { courseId: '', assignmentId: '', category: '', student: null };
+const ASSET_FILTERS = [
+  { value: '', label: 'All student submissions' },
+  { value: 'py_task', label: 'Python task submitted' },
+  { value: 'sql_task', label: 'SQL task submitted' },
+  { value: 'pbi_task', label: 'Power BI task submitted' },
+  { value: 'py_cert', label: 'Python certified students' },
+  { value: 'sql_cert', label: 'SQL certified students' },
+  { value: 'pbi_cert', label: 'Power BI certified students' },
+  { value: 'databricks_cert', label: 'Databricks certified students' },
+  { value: 'hackerrank', label: 'HackerRank certified students' },
+  { value: 'hackerearth', label: 'HackerEarth certified students' },
+  { value: 'multi_cert', label: 'Multiple domain certifications (2+)' },
+  { value: 'py_and_databricks', label: 'Python + Databricks certified students' },
+  { value: 'resume', label: 'Latest resume available' },
+  { value: 'portfolio', label: 'Portfolio available' },
+  { value: 'ai_doc', label: 'AI Architecture document uploaded' },
+];
+
+const NO_FILTERS = { courseId: '', assignmentId: '', category: '', domain: '', assetFilter: '', student: null };
 
 export default function SubmissionReview({ courses = [], refreshKey = 0, focus }) {
   const flash = useFlash();
@@ -43,6 +83,11 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
   const [search, setSearch] = useState('');
   const [assignments, setAssignments] = useState([]);
   const [categories, setCategories] = useState([]);
+  // Quick interactive multi-domain cert filters
+  const [selectedCertDomains, setSelectedCertDomains] = useState([]);
+  const [selectedCertOrg, setSelectedCertOrg] = useState('');
+  const [selectedMultiDomains, setSelectedMultiDomains] = useState(false);
+
   // Per-row drafts, so typing in one row never touches another.
   const [drafts, setDrafts] = useState({});
   const [savingId, setSavingId] = useState(null);
@@ -73,6 +118,12 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
     document.getElementById('submissions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focus]);
 
+  const toggleCertDomain = (domainName) => {
+    setSelectedCertDomains((prev) =>
+      prev.includes(domainName) ? prev.filter((d) => d !== domainName) : [...prev, domainName]
+    );
+  };
+
   const showError = flash.error;
   useEffect(() => {
     setLoading(true);
@@ -81,8 +132,37 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
     if (filters.courseId) params.courseId = filters.courseId;
     if (filters.assignmentId) params.assignmentId = filters.assignmentId;
     if (filters.category) params.category = filters.category;
+    if (filters.domain) params.domain = filters.domain;
     if (filters.student) params.studentId = filters.student.id;
     if (search) params.search = search;
+
+    if (filters.assetFilter) {
+      if (filters.assetFilter === 'py_task') params.domain = 'Python';
+      else if (filters.assetFilter === 'sql_task') params.domain = 'SQL';
+      else if (filters.assetFilter === 'pbi_task') params.domain = 'Power BI';
+      else if (filters.assetFilter === 'py_cert') params.certDomain = 'Python';
+      else if (filters.assetFilter === 'sql_cert') params.certDomain = 'SQL';
+      else if (filters.assetFilter === 'pbi_cert') params.certDomain = 'Power BI';
+      else if (filters.assetFilter === 'databricks_cert') params.certDomain = 'Databricks';
+      else if (filters.assetFilter === 'hackerrank') params.certOrg = 'HackerRank';
+      else if (filters.assetFilter === 'hackerearth') params.certOrg = 'HackerEarth';
+      else if (filters.assetFilter === 'multi_cert') params.multipleDomains = '1';
+      else if (filters.assetFilter === 'py_and_databricks') params.certDomains = 'Python,Databricks';
+      else if (filters.assetFilter === 'resume') params.hasResume = '1';
+      else if (filters.assetFilter === 'portfolio') params.hasPortfolio = '1';
+      else if (filters.assetFilter === 'ai_doc') params.hasAiDoc = '1';
+    }
+
+    // Combine with quick interactive cert domain buttons
+    if (selectedCertDomains.length > 0) {
+      params.certDomains = selectedCertDomains.join(',');
+    }
+    if (selectedCertOrg) {
+      params.certOrg = selectedCertOrg;
+    }
+    if (selectedMultiDomains) {
+      params.multipleDomains = '1';
+    }
 
     let stale = false;
     getAllSubmissions(params)
@@ -96,7 +176,16 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
     return () => {
       stale = true;
     };
-  }, [status, filters, search, refreshKey, showError]);
+  }, [
+    status,
+    filters,
+    search,
+    selectedCertDomains,
+    selectedCertOrg,
+    selectedMultiDomains,
+    refreshKey,
+    showError,
+  ]);
 
   // Task dropdown follows the course chosen: that course's tasks, plus tasks for everyone.
   const taskOptions = useMemo(() => {
@@ -115,9 +204,23 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
       return next;
     });
 
-  const filtered = Boolean(filters.courseId || filters.assignmentId || filters.category || filters.student || search);
+  const filtered = Boolean(
+    filters.courseId ||
+      filters.assignmentId ||
+      filters.category ||
+      filters.domain ||
+      filters.assetFilter ||
+      filters.student ||
+      selectedCertDomains.length > 0 ||
+      selectedCertOrg ||
+      selectedMultiDomains ||
+      search
+  );
   const clearFilters = () => {
     setFilters(NO_FILTERS);
+    setSelectedCertDomains([]);
+    setSelectedCertOrg('');
+    setSelectedMultiDomains(false);
     setQuery('');
     setSearch('');
   };
@@ -214,6 +317,24 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
             <option value="none">Not for a set task</option>
           </select>
         </FilterField>
+        <FilterField label="Domain" className="lg:w-40">
+          <select className="admin-field" value={filters.domain} onChange={(e) => setFilter('domain', e.target.value)}>
+            <option value="">All domains</option>
+            <option value="Python">Python</option>
+            <option value="SQL">SQL</option>
+            <option value="Power BI">Power BI</option>
+            <option value="Databricks">Databricks</option>
+          </select>
+        </FilterField>
+        <FilterField label="Student Filter" className="lg:min-w-[16rem]">
+          <select className="admin-field" value={filters.assetFilter} onChange={(e) => setFilter('assetFilter', e.target.value)}>
+            {ASSET_FILTERS.map((af) => (
+              <option key={af.value} value={af.value}>
+                {af.label}
+              </option>
+            ))}
+          </select>
+        </FilterField>
         <FilterField label="Category" className="lg:w-44">
           <select className="admin-field" value={filters.category} onChange={(e) => setFilter('category', e.target.value)}>
             <option value="">All categories</option>
@@ -229,6 +350,87 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
           </Button>
         )}
       </FilterBar>
+
+      {/* Quick Interactive Combined Certification Filters */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-ink-100 bg-surface-muted/40 px-5 py-2.5 sm:px-6">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-ink-600 mr-1 flex items-center gap-1">
+          <Award className="h-3.5 w-3.5 text-primary-600" />
+          Combined Cert Filter:
+        </span>
+
+        {[
+          { id: 'Python', label: 'Python' },
+          { id: 'SQL', label: 'SQL' },
+          { id: 'Power BI', label: 'Power BI' },
+          { id: 'Databricks', label: 'Databricks' },
+        ].map((d) => {
+          const isSelected = selectedCertDomains.includes(d.id);
+          return (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => toggleCertDomain(d.id)}
+              className={`rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold transition flex items-center gap-1 ${
+                isSelected
+                  ? 'bg-primary-600 text-white shadow-2xs'
+                  : 'bg-white border border-ink-200 text-ink-700 hover:border-primary-300'
+              }`}
+            >
+              <span>{d.label}</span>
+              {isSelected && <Check className="h-3 w-3" />}
+            </button>
+          );
+        })}
+
+        {[
+          { id: 'HackerRank', label: 'HackerRank' },
+          { id: 'HackerEarth', label: 'HackerEarth' },
+        ].map((org) => {
+          const isSelected = selectedCertOrg === org.id;
+          return (
+            <button
+              key={org.id}
+              type="button"
+              onClick={() => setSelectedCertOrg((prev) => (prev === org.id ? '' : org.id))}
+              className={`rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold transition flex items-center gap-1 ${
+                isSelected
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'bg-white border border-ink-200 text-ink-700 hover:border-indigo-300'
+              }`}
+            >
+              <span>{org.label}</span>
+              {isSelected && <Check className="h-3 w-3" />}
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={() => setSelectedMultiDomains((prev) => !prev)}
+          className={`rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold transition flex items-center gap-1 ${
+            selectedMultiDomains
+              ? 'bg-purple-600 text-white shadow-2xs'
+              : 'bg-white border border-ink-200 text-ink-700 hover:border-purple-300'
+          }`}
+        >
+          <span>Multiple Domains (2+)</span>
+          {selectedMultiDomains && <Check className="h-3 w-3" />}
+        </button>
+
+        {(selectedCertDomains.length > 0 || selectedCertOrg || selectedMultiDomains) && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedCertDomains([]);
+              setSelectedCertOrg('');
+              setSelectedMultiDomains(false);
+            }}
+            className="text-[11px] font-semibold text-red-600 hover:underline ml-2"
+          >
+            Reset Cert Filters
+          </button>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 border-b border-ink-100 px-5 py-3 sm:px-6">
         <AdminTabs tabs={tabs} value={status} onChange={setStatus} />
@@ -275,9 +477,25 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Pill tone={meta.tone}>{meta.label}</Pill>
-                      <Pill tone="gray">{submission.category}</Pill>
+                      {submission.domain && (
+                        <Pill tone={submission.domain === 'Python' ? 'blue' : submission.domain === 'SQL' ? 'cyan' : 'amber'}>
+                          {submission.domain}
+                        </Pill>
+                      )}
+                      <Pill tone="gray">{submission.taskCategory || submission.category}</Pill>
                       {submission.courseId?.title && <Pill tone="blue">{submission.courseId.title}</Pill>}
                       {late && <Pill tone="red">Submitted late</Pill>}
+
+                      {/* Student asset indicators */}
+                      {submission.studentAssets?.resume && (
+                        <Pill tone="green">Resume: v{submission.studentAssets.resume.version}</Pill>
+                      )}
+                      {submission.studentAssets?.certifications?.length > 0 && (
+                        <Pill tone="purple">{submission.studentAssets.certifications.length} Cert(s)</Pill>
+                      )}
+                      {submission.studentAssets?.portfolio?.aiConsultation?.documentUrl && (
+                        <Pill tone="purple">AI Doc Uploaded</Pill>
+                      )}
                     </div>
 
                     <p className="mt-3 text-sm font-semibold text-ink-900">
@@ -307,6 +525,31 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
                       )}
                     </p>
                     <p className="mt-2 whitespace-pre-line text-[13px] leading-relaxed text-ink-600">{submission.description}</p>
+
+                    {submission.studentAssets?.certifications?.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-ink-500 flex items-center gap-1">
+                          <Award className="h-3 w-3 text-indigo-600" />
+                          Credentials:
+                        </span>
+                        {submission.studentAssets.certifications.map((c, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 rounded bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 text-[10.5px] font-medium text-indigo-900"
+                            title={`${c.name} (${c.issuingOrg})`}
+                          >
+                            <span className="font-semibold text-indigo-700">{c.domain}:</span>
+                            <span className="truncate max-w-[160px]">{c.name}</span>
+                            {c.certificationLevel && (
+                              <span className="rounded bg-indigo-100/70 px-1 text-[9.5px] font-bold text-indigo-800">
+                                {c.certificationLevel}
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     <p className="mt-2 text-[11px] text-ink-400">
                       Submitted {formatDate(submission.createdAt, true)}
                       {submission.assignmentId?.dueDate ? ` · due ${formatDate(submission.assignmentId.dueDate, true)}` : ''}
@@ -314,10 +557,44 @@ export default function SubmissionReview({ courses = [], refreshKey = 0, focus }
                     </p>
                   </div>
 
-                  <Button href={submission.driveLink} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
-                    Open submission
-                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {submission.datasetLink && (
+                      <Button href={submission.datasetLink} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        Dataset
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {submission.sourceCodeLink && (
+                      <Button href={submission.sourceCodeLink} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        Code Link
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {submission.sourceCodeFile && (
+                      <Button href={resolveMediaUrl(submission.sourceCodeFile)} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        .sql File
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {submission.dashboardFile && (
+                      <Button href={resolveMediaUrl(submission.dashboardFile)} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        Dashboard
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {submission.documentationFile && (
+                      <Button href={resolveMediaUrl(submission.documentationFile)} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        Doc
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {submission.driveLink && !submission.datasetLink && !submission.sourceCodeLink && (
+                      <Button href={submission.driveLink} target="_blank" rel="noopener noreferrer" size="sm" variant="secondary">
+                        Open submission
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 rounded-lg border border-ink-100 bg-ink-50/50 p-4 md:grid-cols-[1fr_9rem]">

@@ -269,12 +269,15 @@ export const addTeamMember = (payload) => api.post('/admin/team', payload).then(
 export const updateTeamMember = (id, payload) => api.patch(`/admin/team/${id}`, payload).then((r) => r.data);
 export const getActivity = (params) => api.get('/admin/activity', { params }).then((r) => r.data);
 
-// --- assignments (tasks with a due date) -----------------------------------------
+// --- assignments (student-specific tasks with a due date) -------------------------
 export const getAssignments = () => api.get('/assignments').then((r) => r.data);
+export const getAssignment = (id) => api.get(`/assignments/${id}`).then((r) => r.data);
 export const getAdminAssignments = () => api.get('/admin/assignments').then((r) => r.data);
 export const createAssignment = (payload) => api.post('/admin/assignments', payload).then((r) => r.data);
 export const updateAssignment = (id, payload) => api.put(`/admin/assignments/${id}`, payload).then((r) => r.data);
 export const deleteAssignment = (id) => api.delete(`/admin/assignments/${id}`).then((r) => r.data);
+export const getAdminStudentCertifications = (params) =>
+  api.get('/admin/student-certifications', { params }).then((r) => r.data);
 
 // --- online payment (Razorpay) ------------------------------------------------------
 export const createRazorpayOrder = (courseId) =>
@@ -378,9 +381,38 @@ export const deleteEvent = (id) => api.delete(`/admin/events/${id}`).then((r) =>
 // --- task submissions -------------------------------------------------------
 export const getSubmissionCategories = () =>
   api.get('/submissions/categories').then((r) => r.data);
+export const getSubmissionOverview = () =>
+  api.get('/submissions/overview').then((r) => r.data);
 export const getMySubmissions = () => api.get('/submissions/mine').then((r) => r.data);
 export const createSubmission = (payload) => api.post('/submissions', payload).then((r) => r.data);
 export const withdrawSubmission = (id) => api.delete(`/submissions/${id}`).then((r) => r.data);
+
+export const uploadSubmissionFile = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/submissions/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((r) => r.data);
+};
+
+export const getMyCertifications = () =>
+  api.get('/submissions/certifications/mine').then((r) => r.data);
+export const addCertification = (payload) =>
+  api.post('/submissions/certifications', payload).then((r) => r.data);
+export const deleteCertification = (id) =>
+  api.delete(`/submissions/certifications/${id}`).then((r) => r.data);
+
+export const getMyResume = () =>
+  api.get('/submissions/resume/mine').then((r) => r.data);
+export const saveResume = (payload) =>
+  api.post('/submissions/resume', payload).then((r) => r.data);
+export const deleteResume = (id) =>
+  api.delete(`/submissions/resume/${id}`).then((r) => r.data);
+
+export const getMyPortfolio = () =>
+  api.get('/submissions/portfolio/mine').then((r) => r.data);
+export const savePortfolio = (payload) =>
+  api.put('/submissions/portfolio', payload).then((r) => r.data);
 
 // --- admin: submission review ----------------------------------------------
 export const getAllSubmissions = (params) =>

@@ -1,25 +1,43 @@
+const mongoose = require('mongoose');
 const Assignment = require('../models/Assignment');
 const Course = require('../models/Course');
 const CourseAccess = require('../models/CourseAccess');
 const Submission = require('../models/Submission');
+const User = require('../models/User');
 const activity = require('../services/activityService');
 const { grantedCourseIds, learnerIdsWithAccess } = require('../services/enrolmentService');
 const { notifyUsers, activeLearnerIds } = require('../services/notificationService');
 const { emailNewTask, describeDelivery, formatDue } = require('../services/taskEmailService');
 
 /**
- * Assignments: tasks with a due date that the admin sets and learners hand
- * work in against. Publishing one notifies the learners it is for — that
- * course's enrolled learners, or everyone when it has no course — in the app
- * and by email, as two separate channels (see taskEmailService).
+ * Assignments: student-specific tasks with a due date.
+ * Tasks are assigned to specific individual learners (assignedStudentIds).
+ * Publishing one notifies ONLY the assigned learners in the app and by email.
  */
 
 function buildFields(body = {}) {
   const fields = {};
   if (body.title !== undefined) fields.title = String(body.title).trim().slice(0, 160);
   if (body.description !== undefined) fields.description = String(body.description).trim().slice(0, 4000);
+  if (body.domain !== undefined) fields.domain = String(body.domain).trim();
+  if (body.category !== undefined) fields.category = String(body.category).trim();
   if (body.courseId !== undefined) fields.courseId = body.courseId || null;
   if (body.published !== undefined) fields.published = Boolean(body.published);
+
+  if (body.assignedStudentIds !== undefined) {
+    let ids = [];
+    if (Array.isArray(body.assignedStudentIds)) {
+      ids = body.assignedStudentIds;
+    } else if (typeof body.assignedStudentIds === 'string' && body.assignedStudentIds.trim()) {
+      ids = [body.assignedStudentIds.trim()];
+    }
+    // Filter and sanitize into valid mongoose ObjectIds
+    fields.assignedStudentIds = ids
+      .map((id) => (typeof id === 'object' && id?._id ? id._id : id))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+  }
+
   if (body.maxScore !== undefined && body.maxScore !== '') {
     const max = Number(body.maxScore);
     if (Number.isFinite(max) && max >= 1 && max <= 1000) fields.maxScore = Math.round(max);
@@ -31,6 +49,69 @@ function buildFields(body = {}) {
       if (!Number.isNaN(date.getTime())) fields.dueDate = date;
     }
   }
+
+  // Full structured instructions and deliverables
+  if (body.objective !== undefined) fields.objective = String(body.objective).trim();
+  if (body.detailedInstructions !== undefined) fields.detailedInstructions = String(body.detailedInstructions).trim();
+
+  if (body.deliverables !== undefined) {
+    let delivs = [];
+    if (Array.isArray(body.deliverables)) {
+      delivs = body.deliverables;
+    } else if (typeof body.deliverables === 'string') {
+      try {
+        delivs = JSON.parse(body.deliverables);
+      } catch {
+        delivs = [];
+      }
+    }
+    fields.deliverables = delivs
+      .filter((d) => d && (d.label || d.name))
+      .map((d) => ({
+        label: String(d.label || d.name).trim(),
+        required: d.required !== false && d.required !== 'false',
+        description: String(d.description || '').trim(),
+      }));
+  }
+
+  if (body.resources !== undefined) {
+    let resList = [];
+    if (Array.isArray(body.resources)) {
+      resList = body.resources;
+    } else if (typeof body.resources === 'string') {
+      try {
+        resList = JSON.parse(body.resources);
+      } catch {
+        resList = [];
+      }
+    }
+    fields.resources = resList
+      .filter((r) => r && (r.title || r.name) && r.url)
+      .map((r) => ({
+        title: String(r.title || r.name).trim(),
+        url: String(r.url).trim(),
+        type: String(r.type || 'link').trim(),
+      }));
+  }
+
+  if (body.submissionGuidelines !== undefined) {
+    fields.submissionGuidelines = String(body.submissionGuidelines).trim();
+  }
+
+  if (body.allowedFileTypes !== undefined) {
+    if (Array.isArray(body.allowedFileTypes)) {
+      fields.allowedFileTypes = body.allowedFileTypes.map((t) => String(t).trim()).filter(Boolean);
+    } else if (typeof body.allowedFileTypes === 'string') {
+      fields.allowedFileTypes = body.allowedFileTypes
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+    }
+  }
+
+  if (body.maxFileSize !== undefined) {
+    fields.maxFileSize = String(body.maxFileSize).trim();
+  }
   return fields;
 }
 
@@ -38,15 +119,21 @@ function buildFields(body = {}) {
 const dueText = formatDue;
 
 /**
- * Tells a newly published task's learners about it, through both channels.
+ * Tells a newly published task's assigned learners about it, through both channels.
  * Returns { notified, email } — how many in-app notifications were created,
  * and the email delivery summary.
  */
 async function announce(assignment) {
-  // Course grants plus Full Access; suspended learners are filtered out either way.
-  const recipients = assignment.courseId
-    ? await learnerIdsWithAccess(assignment.courseId)
-    : await activeLearnerIds();
+  // Notify specifically assigned learners ONLY
+  let recipients = [];
+  if (Array.isArray(assignment.assignedStudentIds) && assignment.assignedStudentIds.length > 0) {
+    recipients = assignment.assignedStudentIds.map((id) => (typeof id === 'object' && id._id ? id._id : id));
+  }
+
+  // If no students are specifically assigned, do not notify anyone
+  if (recipients.length === 0) {
+    return { notified: 0, email: { status: 'no_recipients' } };
+  }
 
   const course = assignment.courseId ? await Course.findById(assignment.courseId).select('title') : null;
 
@@ -57,7 +144,7 @@ async function announce(assignment) {
       type: 'task',
       title: 'New task assigned',
       message:
-        `"${assignment.title}"${course ? ` for ${course.title}` : ''}` +
+        `"${assignment.title}"${assignment.domain ? ` [${assignment.domain}]` : ''}${course ? ` for ${course.title}` : ''}` +
         (assignment.dueDate ? ` — due ${dueText(assignment.dueDate)}.` : '.'),
       courseId: assignment.courseId || undefined,
       link: '/tasks',
@@ -82,23 +169,39 @@ function announcementSummary({ notified, email }) {
 
 /* -------------------------------------------------------------- learner */
 
-/** GET /api/assignments — open assignments for the courses this learner has. */
+/**
+ * GET /api/assignments — student-specific task list.
+ * STRICT: Returns ONLY tasks specifically assigned to the currently authenticated student.
+ * Tasks assigned to other students or unassigned tasks are NEVER returned.
+ * Legacy submissions made by this student are safely preserved.
+ */
 async function listForLearner(req, res, next) {
   try {
-    // Full Access learners get every published course's tasks, unless that course is suspended.
-    const suspendedAccesses = await CourseAccess.find({ studentId: req.user._id, suspended: true }).select('courseId');
-    const suspendedCourseIds = suspendedAccesses.map((a) => a.courseId);
+    const studentId = req.user._id;
 
-    const filter = { published: true };
-    if (!req.user.fullAccess) {
-      const courseIds = await grantedCourseIds(req.user._id);
-      filter.$or = [{ courseId: null }, { courseId: { $exists: false } }, { courseId: { $in: courseIds } }];
-    } else if (suspendedCourseIds.length) {
-      filter.$or = [
-        { courseId: null },
-        { courseId: { $exists: false } },
-        { courseId: { $nin: suspendedCourseIds } },
-      ];
+    // Check for any legacy submissions this student already made (preserve historical access)
+    const priorSubmissions = await Submission.find({
+      studentId,
+      assignmentId: { $ne: null },
+    }).select('assignmentId');
+    const submittedAssignmentIds = priorSubmissions
+      .map((s) => s.assignmentId)
+      .filter((id) => Boolean(id) && mongoose.Types.ObjectId.isValid(id));
+
+    // Filter strictly to tasks assigned to this student (or historical tasks they submitted to)
+    const filter = {
+      published: true,
+      $or: [
+        { assignedStudentIds: studentId },
+        ...(submittedAssignmentIds.length > 0 ? [{ _id: { $in: submittedAssignmentIds } }] : []),
+      ],
+    };
+
+    // Respect course suspensions
+    const suspendedAccesses = await CourseAccess.find({ studentId, suspended: true }).select('courseId');
+    const suspendedCourseIds = suspendedAccesses.map((a) => a.courseId).filter(Boolean);
+    if (suspendedCourseIds.length > 0) {
+      filter.courseId = { $nin: suspendedCourseIds };
     }
 
     const assignments = await Assignment.find(filter)
@@ -106,9 +209,10 @@ async function listForLearner(req, res, next) {
       .sort({ dueDate: 1, createdAt: -1 });
 
     const mine = await Submission.find({
-      studentId: req.user._id,
+      studentId,
       assignmentId: { $in: assignments.map((a) => a._id) },
-    }).select('assignmentId status score createdAt');
+    }).select('assignmentId status score createdAt feedback');
+
     const latest = new Map();
     for (const s of mine) {
       const key = String(s.assignmentId);
@@ -120,10 +224,61 @@ async function listForLearner(req, res, next) {
         const submission = latest.get(String(a._id));
         return {
           ...a.toJSON(),
-          mySubmission: submission ? { status: submission.status, score: submission.score } : null,
+          mySubmission: submission
+            ? {
+                status: submission.status,
+                score: submission.score,
+                feedback: submission.feedback,
+                createdAt: submission.createdAt,
+              }
+            : null,
         };
       })
     );
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/assignments/:id — fetch single assigned task details.
+ * SECURITY: Verifies that the authenticated student is an authorized recipient.
+ */
+async function getAssignment(req, res, next) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid task ID' });
+    }
+
+    const assignment = await Assignment.findOne({ _id: req.params.id, published: true }).populate('courseId', 'title');
+    if (!assignment) return res.status(404).json({ error: 'Task not found or not published' });
+
+    // Authorization check
+    const isAssigned =
+      Array.isArray(assignment.assignedStudentIds) &&
+      assignment.assignedStudentIds.some((id) => id.toString() === req.user._id.toString());
+
+    const hadPrior = !isAssigned && (await Submission.exists({ studentId: req.user._id, assignmentId: assignment._id }));
+
+    if (!isAssigned && !hadPrior) {
+      return res.status(403).json({ error: 'You are not authorized to view this task' });
+    }
+
+    const submission = await Submission.findOne({ studentId: req.user._id, assignmentId: assignment._id })
+      .sort({ createdAt: -1 })
+      .select('status score feedback createdAt');
+
+    res.json({
+      ...assignment.toJSON(),
+      mySubmission: submission
+        ? {
+            status: submission.status,
+            score: submission.score,
+            feedback: submission.feedback,
+            createdAt: submission.createdAt,
+          }
+        : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -135,7 +290,11 @@ async function listForLearner(req, res, next) {
 async function listAll(_req, res, next) {
   try {
     const [assignments, counts] = await Promise.all([
-      Assignment.find().populate('courseId', 'title').sort({ createdAt: -1 }).limit(300),
+      Assignment.find()
+        .populate('courseId', 'title')
+        .populate('assignedStudentIds', 'name email role phone')
+        .sort({ createdAt: -1 })
+        .limit(300),
       Submission.aggregate([
         { $match: { assignmentId: { $ne: null } } },
         {
@@ -149,33 +308,34 @@ async function listAll(_req, res, next) {
     ]);
     const countBy = new Map(counts.map((c) => [String(c._id), c]));
 
-    // How many learners each task reaches: that course's enrolled learners
-    // (plus Full Access), or everyone for a task with no course.
-    const courseKeys = [...new Set(assignments.map((a) => String(a.courseId?._id || '')))];
-    const audienceBy = new Map(
-      await Promise.all(
-        courseKeys.map(async (key) => [key, (key ? await learnerIdsWithAccess(key) : await activeLearnerIds()).length])
-      )
-    );
-
     res.json(
-      assignments.map((a) => ({
-        ...a.toJSON(),
-        submissionCount: countBy.get(String(a._id))?.total || 0,
-        awaitingReview: countBy.get(String(a._id))?.awaiting || 0,
-        audienceCount: audienceBy.get(String(a.courseId?._id || '')) ?? 0,
-      }))
+      assignments.map((a) => {
+        const assignedStudents = (a.assignedStudentIds || []).map((s) => ({
+          id: s._id || s.id,
+          name: s.name,
+          email: s.email,
+        }));
+        return {
+          ...a.toJSON(),
+          assignedStudents,
+          submissionCount: countBy.get(String(a._id))?.total || 0,
+          awaitingReview: countBy.get(String(a._id))?.awaiting || 0,
+          audienceCount: assignedStudents.length,
+        };
+      })
     );
   } catch (err) {
     next(err);
   }
 }
 
-/** POST /api/admin/assignments  body: { title, description, courseId?, dueDate?, maxScore?, published? } */
+/** POST /api/admin/assignments  body: { title, description, domain?, category?, courseId?, assignedStudentIds, dueDate?, maxScore?, published? } */
 async function create(req, res, next) {
   try {
     const fields = buildFields(req.body);
     if (!fields.title) return res.status(400).json({ error: 'Give the task a title' });
+
+    fields.assignedStudentIds = fields.assignedStudentIds || [];
 
     const assignment = await Assignment.create({ published: true, ...fields, createdBy: req.user._id });
     const announced = assignment.published ? await announce(assignment) : null;
@@ -183,9 +343,9 @@ async function create(req, res, next) {
     await activity.log(req, {
       category: 'task',
       action: 'task.created',
-      summary: `Created task "${assignment.title}"${assignment.dueDate ? ` due ${dueText(assignment.dueDate)}` : ''}${
-        announced ? ` and ${announcementSummary(announced)}` : ' as a draft'
-      }`,
+      summary: `Created task "${assignment.title}" for ${assignment.assignedStudentIds.length} student(s)${
+        assignment.dueDate ? ` due ${dueText(assignment.dueDate)}` : ''
+      }${announced ? ` and ${announcementSummary(announced)}` : ' as a draft'}`,
       entityType: 'assignment',
       entityId: assignment._id,
       ...(announced ? { meta: { email: announced.email } } : {}),
@@ -203,10 +363,12 @@ async function update(req, res, next) {
     const before = await Assignment.findById(req.params.id);
     if (!before) return res.status(404).json({ error: 'Task not found' });
 
-    const assignment = await Assignment.findByIdAndUpdate(req.params.id, buildFields(req.body), {
+    const fields = buildFields(req.body);
+
+    const assignment = await Assignment.findByIdAndUpdate(req.params.id, fields, {
       new: true,
       runValidators: true,
-    });
+    }).populate('assignedStudentIds', 'name email role');
 
     const announced = !before.published && assignment.published ? await announce(assignment) : null;
 
@@ -246,4 +408,4 @@ async function remove(req, res, next) {
   }
 }
 
-module.exports = { listForLearner, listAll, create, update, remove };
+module.exports = { listForLearner, getAssignment, listAll, create, update, remove };
