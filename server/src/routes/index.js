@@ -28,6 +28,7 @@ const {
   resolveLessonId,
 } = require('../middleware/courseAccess');
 const { uploadThumbnail } = require('../middleware/upload');
+const { uploadDocument } = require('../middleware/fileUpload');
 const driveService = require('../services/googleDriveService');
 
 const router = express.Router();
@@ -240,19 +241,40 @@ router.delete('/admin/events/:id', ...superAdmin, eventController.deleteEvent);
 // --- task submissions ---
 // The category list is public so the form can render before anything is sent.
 router.get('/submissions/categories', submissionController.listCategories);
+router.get('/submissions/overview', requireAuth, submissionController.getOverview);
 router.get('/submissions/mine', requireAuth, submissionController.listMine);
 router.post('/submissions', requireAuth, submissionController.createSubmission);
 router.delete('/submissions/:id', requireAuth, submissionController.withdraw);
 
-// --- assignments (tasks with a due date) ---
+// File uploads for submissions (resumes, documents, pbix, sql, screenshots)
+router.post('/submissions/upload', requireAuth, uploadDocument, submissionController.uploadFile);
+router.get('/uploads/documents/:filename', submissionController.serveDocument);
+
+// Certifications
+router.get('/submissions/certifications/mine', requireAuth, submissionController.listCertifications);
+router.post('/submissions/certifications', requireAuth, submissionController.addCertification);
+router.delete('/submissions/certifications/:id', requireAuth, submissionController.deleteCertification);
+
+// Resume
+router.get('/submissions/resume/mine', requireAuth, submissionController.getResume);
+router.post('/submissions/resume', requireAuth, submissionController.uploadResume);
+router.delete('/submissions/resume/:id', requireAuth, submissionController.deleteResume);
+
+// Portfolio & AI consultation
+router.get('/submissions/portfolio/mine', requireAuth, submissionController.getPortfolio);
+router.put('/submissions/portfolio', requireAuth, submissionController.updatePortfolio);
+
+// --- assignments (student-specific tasks with a due date) ---
 router.get('/assignments', requireAuth, assignmentController.listForLearner);
+router.get('/assignments/:id', requireAuth, assignmentController.getAssignment);
 router.get('/admin/assignments', ...staff, assignmentController.listAll);
 router.post('/admin/assignments', ...superAdmin, assignmentController.create);
 router.put('/admin/assignments/:id', ...superAdmin, assignmentController.update);
 router.delete('/admin/assignments/:id', ...superAdmin, assignmentController.remove);
 
-// --- admin: submission review queue (Support / Reviewer can review) ---
+// --- admin: submission review queue & certification register ---
 router.get('/admin/submissions', ...staff, submissionController.listAll);
+router.get('/admin/student-certifications', ...staff, submissionController.listAdminCertifications);
 router.patch('/admin/submissions/:id', ...staff, submissionController.review);
 
 // --- certificates ---

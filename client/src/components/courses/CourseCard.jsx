@@ -3,7 +3,7 @@ import { BookOpen, CheckCircle2, Clock, Heart, Lock, PlayCircle, Users } from 'l
 import Badge from '../common/Badge.jsx';
 import ProgressBar from '../common/ProgressBar.jsx';
 import Rating from '../common/Rating.jsx';
-import CourseThumbnail from './CourseThumbnail.jsx';
+import CourseThumbnailPreview from './CourseThumbnailPreview.jsx';
 import { compactNumber, formatHours, formatPrice } from '../../utils/course.js';
 
 /**
@@ -32,9 +32,7 @@ export default function CourseCard({
 
   return (
     <article className="card-interactive group relative flex h-full min-w-0 flex-col overflow-hidden">
-      <div className="relative aspect-[16/9] shrink-0 overflow-hidden bg-ink-100">
-        <CourseThumbnail course={course} />
-
+      <CourseThumbnailPreview course={course} href={href} isEnrolled={isEnrolled}>
         <div className="absolute inset-x-3 top-3 flex items-start justify-between gap-2">
           {course.category ? (
             <Badge tone="overlay">{course.category}</Badge>
@@ -45,7 +43,10 @@ export default function CourseCard({
           {onToggleSave && (
             <button
               type="button"
-              onClick={() => onToggleSave(course._id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSave(course._id);
+              }}
               aria-pressed={saved}
               aria-label={saved ? `Remove ${course.title} from wishlist` : `Save ${course.title} to wishlist`}
               className="relative z-10 grid h-8 w-8 place-items-center rounded-lg bg-white/90 text-ink-600
@@ -77,7 +78,7 @@ export default function CourseCard({
             </span>
           )
         )}
-      </div>
+      </CourseThumbnailPreview>
 
       <div className="flex flex-1 flex-col p-5">
         <div className="flex items-start justify-between gap-3">

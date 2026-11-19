@@ -28,17 +28,41 @@ const CATEGORIES = [
   'Other',
 ];
 
+const DOMAINS = ['Python', 'SQL', 'Power BI', 'Data Science', 'Gen AI'];
 const STATUSES = ['submitted', 'under_review', 'accepted', 'needs_revision'];
 
 const submissionSchema = new mongoose.Schema(
   {
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
+    // Technical domain: Python, SQL, Power BI (or upcoming Data Science, Gen AI)
+    domain: { type: String, enum: DOMAINS, default: 'Python', index: true },
+
     category: { type: String, enum: CATEGORIES, required: true, index: true },
+    taskCategory: { type: String, default: '', trim: true },
     title: { type: String, default: '', trim: true },
     description: { type: String, required: true, trim: true },
 
-    driveLink: { type: String, required: true, trim: true },
+    // Preserved for backwards compatibility with existing submissions
+    driveLink: { type: String, default: '', trim: true },
+
+    // Domain-specific fields
+    datasetLink: { type: String, default: '', trim: true },
+    sourceCodeLink: { type: String, default: '', trim: true },
+    sourceCodeFile: { type: String, default: '', trim: true },
+    dashboardFile: { type: String, default: '', trim: true },
+    documentationFile: { type: String, default: '', trim: true },
+    outputResults: { type: String, default: '', trim: true },
+    screenshots: [{ type: String, trim: true }],
+
+    // Deliverables submitted against structured assignment deliverables
+    deliverablesData: [
+      {
+        label: { type: String, trim: true },
+        value: { type: String, trim: true },
+        fileUrl: { type: String, trim: true },
+      },
+    ],
 
     // Optional tie to the course the work belongs to.
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course' },
@@ -72,6 +96,7 @@ submissionSchema.set('toJSON', {
 
 const Submission = mongoose.model('Submission', submissionSchema);
 
+Submission.DOMAINS = DOMAINS;
 Submission.CATEGORIES = CATEGORIES;
 Submission.STATUSES = STATUSES;
 

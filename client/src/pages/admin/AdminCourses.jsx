@@ -11,6 +11,7 @@ import {
   Plus,
   Save,
   Trash2,
+  Video,
   X,
 } from 'lucide-react';
 import {
@@ -50,7 +51,7 @@ export default function AdminCourses() {
   const [loading, setLoading] = useState(true);
   const [courseStats, setCourseStats] = useState([]);
 
-  const [newCourse, setNewCourse] = useState({ title: '', slug: '', description: '', price: '', published: true });
+  const [newCourse, setNewCourse] = useState({ title: '', slug: '', description: '', price: '', published: true, introVideoUrl: '' });
   const [creatingCourse, setCreatingCourse] = useState(false);
 
   const [newLesson, setNewLesson] = useState({
@@ -100,12 +101,13 @@ export default function AdminCourses() {
         price: newCourse.price === '' ? 0 : Number(newCourse.price),
         published: newCourse.published,
         notifyStudents: newCourse.published,
+        introVideoUrl: newCourse.introVideoUrl ? newCourse.introVideoUrl.trim() : '',
       });
       setCourses((prev) => [...prev, created]);
       flash.success(
         `Course "${created.title}" created${created.published === false ? ' as a draft' : ' and learners notified'}. Add lessons below.`
       );
-      setNewCourse({ title: '', slug: '', description: '', price: '', published: true });
+      setNewCourse({ title: '', slug: '', description: '', price: '', published: true, introVideoUrl: '' });
       fetchCourseStats();
     } catch (err) {
       flash.error(toErrorMessage(err));
@@ -332,6 +334,14 @@ export default function AdminCourses() {
                 onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
               />
             </div>
+            <Input
+              label="Intro / preview video URL"
+              icon={Video}
+              placeholder="https://www.youtube.com/watch?v=… or a direct .mp4 URL"
+              value={newCourse.introVideoUrl}
+              onChange={(e) => setNewCourse({ ...newCourse, introVideoUrl: e.target.value })}
+              hint="Optional marketing preview. Shown on course thumbnails and details."
+            />
             <label className="flex items-start gap-2.5 rounded-lg border border-ink-100 p-3 text-[13px] text-ink-700">
               <input
                 type="checkbox"

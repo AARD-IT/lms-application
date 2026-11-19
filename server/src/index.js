@@ -10,6 +10,7 @@ const driveService = require('./services/googleDriveService');
 const { initSocket } = require('./services/socketService');
 const { UPLOAD_ROOT } = require('./middleware/upload');
 const { serveImage } = require('./controllers/uploadController');
+const { serveDocument } = require('./controllers/submissionController');
 const routes = require('./routes');
 
 const PORT = process.env.PORT || 5000;
@@ -73,6 +74,7 @@ app.use(
 // of them on Render, whose disk is wiped on each restart) is served from the
 // database. express.static above falls through to here on a miss.
 app.get('/uploads/thumbnails/:filename', serveImage);
+app.get('/uploads/documents/:filename', serveDocument);
 
 app.use('/api', routes);
 app.use(notFoundHandler);
