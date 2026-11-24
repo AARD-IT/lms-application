@@ -303,8 +303,8 @@ async function getLearner(req, res, next) {
         .filter((g) => g.courseId)
         .map((grant) =>
           describe(grant.courseId, {
-            // A removed or expired grant is still covered while Full Access is on, unless explicitly suspended.
-            live: !grant.suspended && (isGrantLive(grant) || (learner.fullAccess && grant.courseId.published !== false)),
+            // An explicitly removed (inactive) or suspended grant is not live.
+            live: Boolean(grant.active) && !grant.suspended && (isGrantLive(grant) || (learner.fullAccess && grant.courseId.published !== false)),
             active: grant.active,
             suspended: Boolean(grant.suspended),
             suspensionReason: grant.suspensionReason || '',
@@ -511,9 +511,19 @@ async function enrolLearner(req, res, next) {
 /** DELETE /api/admin/learners/:id/enrol/:courseId — removes access. */
 async function unenrolLearner(req, res, next) {
   try {
+    const learnerId = req.params.id;
+    const courseId = req.params.courseId;
+
+    if (!learnerId || !mongoose.isValidObjectId(learnerId)) {
+      return res.status(400).json({ error: 'Valid learner ID is required' });
+    }
+    if (!courseId || !mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ error: 'Valid course ID is required' });
+    }
+
     const [learner, course] = await Promise.all([
-      User.findOne({ _id: req.params.id, ...LEARNER_FILTER }),
-      Course.findById(req.params.courseId),
+      User.findOne({ _id: learnerId, ...LEARNER_FILTER }),
+      Course.findById(courseId),
     ]);
     if (!learner) return res.status(404).json({ error: 'Learner not found' });
     if (!course) return res.status(404).json({ error: 'Course not found' });

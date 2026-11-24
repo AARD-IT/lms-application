@@ -10,6 +10,7 @@ import {
   CreditCard,
   ExternalLink,
   FolderOpen,
+  GraduationCap,
   KeyRound,
   Mail,
   MapPin,
@@ -92,6 +93,11 @@ export default function AdminLearnerDetail() {
     open: false,
     course: null,
     reason: '',
+  });
+
+  const [unenrolModal, setUnenrolModal] = useState({
+    open: false,
+    course: null,
   });
 
   // Stores the reason without triggering a React re-render on every keystroke.
@@ -276,6 +282,31 @@ export default function AdminLearnerDetail() {
       course,
       reason: '',
     });
+  };
+
+  const openUnenrol = (course) => {
+    setUnenrolModal({
+      open: true,
+      course,
+    });
+  };
+
+  const handleConfirmUnenrol = async () => {
+    if (!unenrolModal.course) return;
+
+    const course = unenrolModal.course;
+    const result = await run(
+      `unenrol-${course.courseId}`,
+      () => unenrolLearner(learner.id, course.courseId),
+      `${learner.name} has been unenrolled from "${course.title}".`
+    );
+
+    if (result) {
+      setUnenrolModal({
+        open: false,
+        course: null,
+      });
+    }
   };
 
   const handleConfirmSuspend = async () => {
@@ -754,58 +785,91 @@ export default function AdminLearnerDetail() {
                       </td>
 
                       {isSuperAdmin && (
-                        <td className="text-right">
-                          {course.suspended ? (
-                            <button
-                              type="button"
-                              onClick={() => handleReactivate(course)}
-                              disabled={
-                                busy === `reactivate-${course.courseId}`
-                              }
-                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
-                            >
-                              <ShieldCheck
-                                className="h-3.5 w-3.5"
-                                aria-hidden="true"
-                              />
-                              Reactivate
-                            </button>
-                          ) : course.live ? (
-                            <button
-                              type="button"
-                              onClick={() => openSuspend(course)}
-                              disabled={busy === 'suspend'}
-                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
-                            >
-                              <PauseCircle
-                                className="h-3.5 w-3.5"
-                                aria-hidden="true"
-                              />
-                              Suspend
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                run(
-                                  `enrol-${course.courseId}`,
-                                  () =>
-                                    enrolLearner(
-                                      learner.id,
-                                      course.courseId
-                                    ),
-                                  `Access to "${course.title}" restored.`
-                                )
-                              }
-                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-50"
-                            >
-                              <Plus
-                                className="h-3.5 w-3.5"
-                                aria-hidden="true"
-                              />
-                              Restore
-                            </button>
-                          )}
+                        <td className="text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-2">
+                            {course.suspended ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openUnenrol(course)}
+                                  disabled={busy === `unenrol-${course.courseId}`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-600 bg-white px-2.5 py-1 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 hover:border-primary-700 disabled:opacity-50"
+                                >
+                                  <GraduationCap
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Unenroll
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleReactivate(course)}
+                                  disabled={
+                                    busy === `reactivate-${course.courseId}`
+                                  }
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500 bg-white px-2.5 py-1 text-[12px] font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50 hover:border-emerald-600 disabled:opacity-50"
+                                >
+                                  <ShieldCheck
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Reactivate
+                                </button>
+                              </>
+                            ) : course.live ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openUnenrol(course)}
+                                  disabled={busy === `unenrol-${course.courseId}`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-600 bg-white px-2.5 py-1 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 hover:border-primary-700 disabled:opacity-50"
+                                >
+                                  <GraduationCap
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Unenroll
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => openSuspend(course)}
+                                  disabled={busy === 'suspend'}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-red-600 shadow-sm transition hover:bg-red-50 hover:border-red-400 disabled:opacity-50"
+                                >
+                                  <PauseCircle
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Suspend
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  run(
+                                    `enrol-${course.courseId}`,
+                                    () =>
+                                      enrolLearner(
+                                        learner.id,
+                                        course.courseId
+                                      ),
+                                    `Access to "${course.title}" restored.`
+                                  )
+                                }
+                                disabled={busy === `enrol-${course.courseId}`}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 hover:border-primary-400 disabled:opacity-50"
+                              >
+                                <Plus
+                                  className="h-3.5 w-3.5"
+                                  aria-hidden="true"
+                                />
+                                Restore
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -1161,6 +1225,66 @@ export default function AdminLearnerDetail() {
         </Panel>
       )}
 
+      {/* --- Unenroll Course Modal ----------------------------------------- */}
+      <Modal
+        open={unenrolModal.open}
+        onClose={() => {
+          if (!busy.startsWith('unenrol-')) {
+            setUnenrolModal({
+              open: false,
+              course: null,
+            });
+          }
+        }}
+        title="Unenroll Learner from Course"
+        description="Remove this learner's access from the selected course."
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                setUnenrolModal({
+                  open: false,
+                  course: null,
+                })
+              }
+              disabled={busy.startsWith('unenrol-')}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              variant="danger"
+              disabled={busy.startsWith('unenrol-')}
+              loading={busy.startsWith('unenrol-')}
+              onClick={handleConfirmUnenrol}
+            >
+              Confirm Unenroll
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3.5 text-sm text-blue-950">
+            <p>
+              Are you sure you want to unenroll <strong>{learner.name}</strong> from <strong>&quot;{unenrolModal.course?.title}&quot;</strong>?
+            </p>
+          </div>
+
+          <div className="space-y-2 text-xs leading-relaxed text-ink-600">
+            <p>
+              • The learner will immediately lose access to <strong>{unenrolModal.course?.title}</strong> and its lesson materials.
+            </p>
+            <p>
+              • Other enrolled courses, payment transactions, and certificates will remain unchanged.
+            </p>
+            <p>
+              • Learning progress is preserved. You can re-grant access at any time using the <strong>Restore</strong> action.
+            </p>
+          </div>
+        </div>
+      </Modal>
+
       {/* --- Suspend Course Modal ----------------------------------------- */}
       <Modal
         open={suspendModal.open}
@@ -1207,6 +1331,10 @@ export default function AdminLearnerDetail() {
         }
       >
         <div className="space-y-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-950">
+            Suspending access for <strong>{learner.name}</strong> to <strong>&quot;{suspendModal.course?.title}&quot;</strong>. Learning progress and access to other courses remain preserved.
+          </div>
+
           <div>
             <label className="block text-[12px] font-semibold uppercase tracking-wider text-ink-500 mb-1">
               Course
