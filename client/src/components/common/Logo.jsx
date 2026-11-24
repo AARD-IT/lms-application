@@ -7,9 +7,9 @@ import { Link } from 'react-router-dom';
  *   compact  icon + name, for bars where the tagline would be too small to read
  *   mark     the icon alone
  */
-export const LOGO_FULL_SRC = '/logos/analytics-avenue-full.png';
-export const LOGO_COMPACT_SRC = '/logos/analytics-avenue-compact.png';
-export const LOGO_SRC = '/logos/analytics-avenue-mark.png';
+export const LOGO_FULL_SRC = '/logos/new analytics avenue logo.png';
+export const LOGO_COMPACT_SRC = '/logos/new analytics avenue logo.png';
+export const LOGO_SRC = '/logos/new analytics avenue logo.png';
 export const LOGO_NAME = 'Analytics Avenue';
 
 const SIZES = {
@@ -41,8 +41,8 @@ export default function Logo({ to = '/', tone = 'dark', variant = 'compact', cla
       aria-label={`${LOGO_NAME} — home`}
       className={`inline-flex shrink-0 items-center rounded-lg ${light ? `bg-white shadow-sm ${variant === 'full' ? 'px-4 py-3' : 'px-2.5 py-1'}` : ''} ${className}`}
     >
-      {compact && <img src={LOGO_SRC} alt="" className={`${height} w-auto md:hidden`} />}
-      <img src={src} alt="" className={`${height} w-auto max-w-none ${compact ? 'hidden md:block' : ''}`} />
+      {compact && <img src={LOGO_SRC} alt="" className={`${height} w-auto md:hidden object-contain`} />}
+      <img src={src} alt="" className={`${height} w-auto max-w-none object-contain ${compact ? 'hidden md:block' : ''}`} />
     </Link>
   );
 }
