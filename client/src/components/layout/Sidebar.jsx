@@ -128,7 +128,7 @@ function Nav({ onNavigate, onClose }) {
           <ShieldCheck className="h-[18px] w-[18px]" aria-hidden="true" />
           How It Works
         </NavLink>
-        <a href="mailto:support@analyticsavenue.example" className="sidebar-link">
+        <a href="mailto:support@analyticsavenue.exampl" className="sidebar-link">
           <LifeBuoy className="h-[18px] w-[18px]" aria-hidden="true" />
           Help &amp; Support
         </a>
