@@ -440,6 +440,18 @@ export const streamUrl = (lessonId) => {
   return `${API_ORIGIN}/api/videos/${lessonId}/stream${qs}`;
 };
 
+// --- support tickets (student) ---
+export const createTicket = (payload) => api.post('/tickets', payload).then((r) => r.data);
+export const getMyTickets = (params) => api.get('/tickets/my-tickets', { params }).then((r) => r.data);
+export const getTicket = (id) => api.get(`/tickets/${id}`).then((r) => r.data);
+export const replyToTicket = (id, payload) => api.post(`/tickets/${id}/reply`, payload).then((r) => r.data);
+
+// --- support tickets (admin) ---
+export const getAdminTickets = (params) => api.get('/admin/tickets', { params }).then((r) => r.data);
+export const getAdminTicketStats = () => api.get('/admin/tickets/stats').then((r) => r.data);
+export const updateTicketStatus = (id, payload) => api.patch(`/admin/tickets/${id}/status`, payload).then((r) => r.data);
+export const adminReplyToTicket = (id, payload) => api.post(`/admin/tickets/${id}/reply`, payload).then((r) => r.data);
+
 /** Normalises an axios failure into a message we can show a student. */
 export function toErrorMessage(err, fallback = 'Something went wrong. Please try again.') {
   const responseError = err?.response?.data?.error;

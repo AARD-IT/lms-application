@@ -35,6 +35,8 @@ const notificationSchema = new mongoose.Schema(
         // --- learner-facing ---
         // A submission was reviewed (feedback and score).
         'task_review',
+        // Support ticket updates
+        'support_ticket',
       ],
       required: true,
     },

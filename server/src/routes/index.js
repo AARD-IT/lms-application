@@ -20,6 +20,7 @@ const teamController = require('../controllers/teamController');
 const insightsController = require('../controllers/adminInsightsController');
 const reviewController = require('../controllers/reviewController');
 const enquiryController = require('../controllers/enquiryController');
+const ticketController = require('../controllers/ticketController');
 const { requireAuth, optionalAuth, requireAdmin, requireSuperAdmin } = require('../middleware/authMiddleware');
 const {
   requireCourseAccess,
@@ -297,5 +298,18 @@ router.post('/payments/razorpay/verify', requireAuth, paymentController.verifyRa
 router.post('/payments/razorpay/failed', requireAuth, paymentController.reportRazorpayFailure);
 // Public: authenticated by the X-Razorpay-Signature HMAC over the raw body.
 router.post('/payments/webhook/razorpay', paymentController.razorpayWebhook);
+
+// --- student support tickets ---
+router.post('/tickets', requireAuth, ticketController.createTicket);
+router.get('/tickets/my-tickets', requireAuth, ticketController.getMyTickets);
+router.get('/tickets/:ticketId', requireAuth, ticketController.getTicketById);
+router.post('/tickets/:ticketId/reply', requireAuth, ticketController.studentReply);
+
+// --- admin support tickets ---
+router.get('/admin/tickets/stats', ...staff, ticketController.getAdminTicketStats);
+router.get('/admin/tickets', ...staff, ticketController.listAdminTickets);
+router.get('/admin/tickets/:ticketId', ...staff, ticketController.getTicketById);
+router.patch('/admin/tickets/:ticketId/status', ...staff, ticketController.updateTicketStatus);
+router.post('/admin/tickets/:ticketId/reply', ...staff, ticketController.adminReply);
 
 module.exports = router;

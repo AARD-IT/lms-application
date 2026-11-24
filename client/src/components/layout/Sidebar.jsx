@@ -15,6 +15,7 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
+  Ticket,
   TrendingUp,
   User,
   X,
@@ -33,6 +34,8 @@ const primaryLinks = [
   { to: '/certificates', label: 'Certificates', icon: Award },
   { to: '/events', label: 'Upcoming Events', icon: CalendarClock },
   { to: '/tasks', label: 'Task Submission', icon: ClipboardList },
+  { to: '/raise-ticket', label: 'Raise Ticket', icon: LifeBuoy },
+  { to: '/my-tickets', label: 'My Tickets', icon: Ticket },
   { to: '/notifications', label: 'Notifications', icon: Bell, badge: 'notifications' },
   { to: '/progress', label: 'Progress', icon: TrendingUp },
 ];

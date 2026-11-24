@@ -11,6 +11,8 @@ const { initSocket } = require('./services/socketService');
 const { UPLOAD_ROOT } = require('./middleware/upload');
 const { serveImage } = require('./controllers/uploadController');
 const { serveDocument } = require('./controllers/submissionController');
+const adminTicketRoutes = require('./routes/adminTicketRoutes');
+const studentTicketRoutes = require('./routes/studentTicketRoutes');
 const routes = require('./routes');
 
 const PORT = process.env.PORT || 5000;
@@ -75,6 +77,10 @@ app.use(
 // database. express.static above falls through to here on a miss.
 app.get('/uploads/thumbnails/:filename', serveImage);
 app.get('/uploads/documents/:filename', serveDocument);
+
+// Support ticket routes
+app.use('/api/admin/tickets', adminTicketRoutes);
+app.use('/api/tickets', studentTicketRoutes);
 
 app.use('/api', routes);
 app.use(notFoundHandler);

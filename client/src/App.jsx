@@ -46,10 +46,13 @@ const AdminActivity = lazy(() => import('./pages/admin/AdminActivity.jsx'));
 const AdminAccount = lazy(() => import('./pages/admin/AdminAccount.jsx'));
 const AdminReviews = lazy(() => import('./pages/admin/AdminReviews.jsx'));
 const AdminEnquiries = lazy(() => import('./pages/admin/AdminEnquiries.jsx'));
+const AdminTickets = lazy(() => import('./pages/admin/AdminTickets.jsx'));
 const Checkout = lazy(() => import('./pages/Checkout.jsx'));
 const Events = lazy(() => import('./pages/Events.jsx'));
 const TaskSubmission = lazy(() => import('./pages/TaskSubmission.jsx'));
 const Notifications = lazy(() => import('./pages/Notifications.jsx'));
+const RaiseTicket = lazy(() => import('./pages/RaiseTicket.jsx'));
+const MyTickets = lazy(() => import('./pages/MyTickets.jsx'));
 
 function RouteFallback() {
   return (
@@ -143,6 +146,9 @@ export default function App() {
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/events" element={<Events />} />
               <Route path="/tasks" element={<TaskSubmission />} />
+              <Route path="/raise-ticket" element={<RaiseTicket />} />
+              <Route path="/my-tickets" element={<MyTickets />} />
+              <Route path="/my-tickets/:ticketId" element={<MyTickets />} />
               {/* Checkout lives under /courses so it reads as a step in the
                   catalogue flow, but it needs a signed-in student. */}
               <Route path="/courses/:courseId/enrol" element={<Checkout />} />
@@ -173,6 +179,8 @@ export default function App() {
               <Route path="certificates" element={<AdminCertificates />} />
               <Route path="reviews" element={<AdminReviews />} />
               <Route path="enquiries" element={<AdminEnquiries />} />
+              <Route path="tickets" element={<AdminTickets />} />
+              <Route path="tickets/:ticketId" element={<AdminTickets />} />
               <Route path="notifications" element={<AdminNotifications />} />
               <Route path="settings" element={<SuperAdminOnly><AdminSettings /></SuperAdminOnly>} />
               <Route path="team" element={<SuperAdminOnly><AdminTeam /></SuperAdminOnly>} />

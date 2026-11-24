@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -15,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   Star,
+  Ticket,
   UserCog,
   Users,
   X,
@@ -22,6 +24,7 @@ import {
 import Logo from '../../common/Logo.jsx';
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { useNotifications } from '../../../context/NotificationContext.jsx';
+import { getAdminTicketStats } from '../../../api/client';
 
 /**
  * The admin panel's own navigation — a deep blue column, so it is never
@@ -57,6 +60,10 @@ const GROUPS = [
     links: [{ to: '/admin/notifications', label: 'Notifications', icon: Bell, badge: true }],
   },
   {
+    label: 'Support',
+    links: [{ to: '/admin/tickets', label: 'Tickets', icon: Ticket, badge: 'tickets' }],
+  },
+  {
     label: 'Administration',
     superOnly: true,
     links: [
@@ -70,6 +77,26 @@ const GROUPS = [
 function Nav({ onNavigate, onClose }) {
   const { signOut, isSuperAdmin } = useAuth();
   const { unreadCount } = useNotifications();
+  const [openTicketCount, setOpenTicketCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchTicketStats = () => {
+      getAdminTicketStats()
+        .then((res) => {
+          if (mounted && res?.stats) {
+            setOpenTicketCount((res.stats.open || 0) + (res.stats.under_review || 0));
+          }
+        })
+        .catch(() => {});
+    };
+    fetchTicketStats();
+    const timer = setInterval(fetchTicketStats, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const link = ({ to, label, icon: Icon, end, badge }) => (
     <NavLink
@@ -83,11 +110,14 @@ function Nav({ onNavigate, onClose }) {
         <>
           <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
           <span className="flex-1">{label}</span>
-          {badge && unreadCount > 0 && (
-            <span
-              className="rounded-md bg-white px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-800"
-            >
+          {(badge === 'notifications' || badge === true) && unreadCount > 0 && (
+            <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-800">
               {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+          {badge === 'tickets' && openTicketCount > 0 && (
+            <span className="rounded-md bg-amber-400 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-ink-900">
+              {openTicketCount > 9 ? '9+' : openTicketCount}
             </span>
           )}
         </>
