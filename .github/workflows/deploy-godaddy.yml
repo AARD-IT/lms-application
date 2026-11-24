@@ -8,6 +8,7 @@ on:
     paths:
       - "client/**"
       - ".github/workflows/deploy-godaddy.yml"
+
   workflow_dispatch:
 
 permissions:
@@ -23,9 +24,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup Node.js
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -33,16 +36,34 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
+      # 3. Install dependencies
       - name: Install frontend dependencies
         working-directory: client
         run: npm ci
 
+      # 4. Build frontend
       - name: Build frontend
         working-directory: client
         env:
           VITE_API_URL: https://lms-application-yojp.onrender.com
         run: npm run build
 
+      # 5. Test GoDaddy SSH connection
+      - name: Test GoDaddy SSH connection
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GODADDY_HOST }}
+          username: ${{ secrets.GODADDY_USERNAME }}
+          key: ${{ secrets.GODADDY_SSH_KEY }}
+          port: ${{ secrets.GODADDY_PORT }}
+          command_timeout: 30s
+          script: |
+            echo "SSH connection successful"
+            whoami
+            pwd
+            ls -ld ~/public_html/lms.analyticsavenuerd.in
+
+      # 6. Upload frontend build to GoDaddy
       - name: Upload frontend build to GoDaddy
         uses: appleboy/scp-action@v0.1.7
         with:
