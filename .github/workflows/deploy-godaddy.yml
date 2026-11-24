@@ -1,3 +1,4 @@
+
 name: Deploy LMS Frontend to GoDaddy
 
 on:
@@ -23,11 +24,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Setup Node.js
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,34 +34,27 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
-      # 3. Install dependencies
       - name: Install frontend dependencies
         working-directory: client
         run: npm ci
 
-      # 4. Build frontend
       - name: Build frontend
         working-directory: client
         env:
           VITE_API_URL: https://lms-application-yojp.onrender.com
         run: npm run build
 
-      # 5. Deploy using FTP
       - name: Deploy frontend to GoDaddy
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: ${{ secrets.GODADDY_FTP_HOST }}
           username: ${{ secrets.GODADDY_FTP_USERNAME }}
           password: ${{ secrets.GODADDY_FTP_PASSWORD }}
-
           protocol: ftps
           port: 21
-
           local-dir: ./client/dist/
           server-dir: /public_html/lms.analyticsavenuerd.in/
-
           timeout: 120000
-
           exclude: |
             **/.htaccess
             **/.ftp-deploy-sync-state.json
