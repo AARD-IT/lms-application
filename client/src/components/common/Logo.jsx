@@ -14,13 +14,13 @@ export const LOGO_NAME = 'Analytics Avenue';
 
 const SIZES = {
   sm: 'h-8',
-  md: 'h-12',
-  lg: 'h-14',
-  xl: 'h-16',
-  '2xl': 'h-24',
-  '3xl': 'h-28',
-  // Smaller on phones, where it shares the bar with buttons.
-  nav: 'h-12 lg:h-14',
+  md: 'h-9 lg:h-10',
+  lg: 'h-12',
+  xl: 'h-14',
+  '2xl': 'h-16 lg:h-20',
+  '3xl': 'h-20 lg:h-24',
+  // Responsive: comfortably scaled on phones, prominent on desktop
+  nav: 'h-10 lg:h-12',
 };
 
 /**
