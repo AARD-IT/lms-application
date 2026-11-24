@@ -53,7 +53,7 @@ jobs:
           protocol: ftps
           port: 21
           local-dir: ./client/dist/
-          server-dir: /public_html/lms.analyticsavenuerd.in/
+          server-dir: /
           timeout: 120000
           exclude: |
             **/.htaccess
