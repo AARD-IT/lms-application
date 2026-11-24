@@ -44,6 +44,11 @@ async function courseAccessFor(user, courseId) {
     };
   }
 
+  // If an explicit grant exists and is inactive, learner has been unenrolled from this course
+  if (grant && !grant.active) {
+    return { allowed: false, reason: 'none' };
+  }
+
   // Full Access covers every published course; drafts stay with staff until released.
   if (user.fullAccess && (await Course.exists({ _id: courseId, published: { $ne: false } }))) {
     return { allowed: true, via: 'full' };
@@ -184,8 +189,17 @@ async function grantCourseAccess(studentId, course, { by, source = 'manual', lea
 async function revokeCourseAccess(studentId, course) {
   const grant = await CourseAccess.findOneAndUpdate(
     { studentId, courseId: course._id },
-    { active: false },
-    { new: true }
+    {
+      $set: {
+        active: false,
+        suspended: false,
+        suspensionReason: '',
+        suspendedBy: null,
+        suspendedAt: null,
+      },
+      $setOnInsert: { studentId, courseId: course._id, source: 'manual' },
+    },
+    { new: true, upsert: true }
   );
   if (!grant) return null;
 
@@ -219,13 +233,23 @@ async function markPaymentSuccessful(enrollment, { reference = '', by, note = ''
   const wasSuccessful = enrollment.status === 'completed';
 
   if (!wasSuccessful) {
+    const now = new Date();
     enrollment.status = 'completed';
     if (reference) enrollment.reference = String(reference).slice(0, 120);
     enrollment.failureReason = '';
     enrollment.confirmedBy = by || undefined;
-    enrollment.confirmedAt = new Date();
+    enrollment.confirmedAt = now;
     enrollment.history.push({ status: 'completed', note: note || (by ? 'Marked paid by admin' : 'Payment verified'), by });
     await enrollment.save();
+
+    // If this payment was confirmed now, ensure createdAt is synced if it was created significantly earlier
+    if (enrollment.createdAt && (now - new Date(enrollment.createdAt) > 24 * 60 * 60 * 1000)) {
+      await enrollment.constructor.collection.updateOne(
+        { _id: enrollment._id },
+        { $set: { createdAt: now } }
+      );
+      enrollment.createdAt = now;
+    }
   }
 
   if (!course || !student) return { enrollment, granted: false };

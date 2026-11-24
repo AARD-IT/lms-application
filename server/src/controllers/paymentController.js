@@ -38,6 +38,37 @@ const METHOD_LABEL = {
 // The PDF's built-in Helvetica has no ₹ glyph, so the report spells it out.
 const pdfMoney = (amount) => `Rs. ${Number(amount || 0).toLocaleString('en-IN')}`;
 
+/** Parses date query parameters into a range covering both UTC and IST (UTC+05:30) bounds. */
+function parseDateBounds(from, to) {
+  const range = {};
+  if (from) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      const utcStart = new Date(`${from}T00:00:00.000Z`);
+      const istStart = new Date(`${from}T00:00:00.000+05:30`);
+      const start = new Date(Math.min(utcStart.getTime(), istStart.getTime()));
+      if (!Number.isNaN(start.getTime())) range.$gte = start;
+    } else {
+      const start = new Date(from);
+      if (!Number.isNaN(start.getTime())) range.$gte = start;
+    }
+  }
+  if (to) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      const utcEnd = new Date(`${to}T23:59:59.999Z`);
+      const istEnd = new Date(`${to}T23:59:59.999+05:30`);
+      const end = new Date(Math.max(utcEnd.getTime(), istEnd.getTime()));
+      if (!Number.isNaN(end.getTime())) range.$lte = end;
+    } else {
+      const end = new Date(to);
+      if (!Number.isNaN(end.getTime())) {
+        end.setHours(23, 59, 59, 999);
+        range.$lte = end;
+      }
+    }
+  }
+  return range;
+}
+
 /** Builds the Mongo filter for the list and the report from the same query string. */
 async function filterFrom(query) {
   const { search, status, courseId, studentId, from, to, includeFree } = query;
@@ -51,19 +82,15 @@ async function filterFrom(query) {
   if (courseId) filter.courseId = courseId;
   if (studentId) filter.studentId = studentId;
 
-  const range = {};
-  if (from) {
-    const start = new Date(from);
-    if (!Number.isNaN(start.getTime())) range.$gte = start;
+  const range = parseDateBounds(from, to);
+  if (Object.keys(range).length) {
+    all.push({
+      $or: [
+        { confirmedAt: range },
+        { createdAt: range },
+      ],
+    });
   }
-  if (to) {
-    const end = new Date(to);
-    if (!Number.isNaN(end.getTime())) {
-      end.setHours(23, 59, 59, 999); // inclusive of the whole "to" day
-      range.$lte = end;
-    }
-  }
-  if (Object.keys(range).length) filter.createdAt = range;
 
   if (search) {
     const pattern = new RegExp(escapeRegex(String(search).trim()), 'i');
@@ -79,11 +106,19 @@ async function filterFrom(query) {
 
 async function findTransactions(query, limit = 500) {
   const filter = await filterFrom(query);
-  return Enrollment.find(filter)
+  const rows = await Enrollment.find(filter)
     .populate('studentId', 'name email phone')
     .populate('courseId', 'title price')
     .sort({ createdAt: -1 })
     .limit(limit);
+
+  rows.sort((a, b) => {
+    const dateA = new Date(a.confirmedAt || a.createdAt || 0).getTime();
+    const dateB = new Date(b.confirmedAt || b.createdAt || 0).getTime();
+    return dateB - dateA;
+  });
+
+  return rows;
 }
 
 function summarise(rows) {
@@ -210,7 +245,7 @@ async function downloadReport(req, res, next) {
       }
       if (index % 2 === 0) doc.rect(36, y, pageWidth, 22).fill('#f7f9fc');
       const cells = [
-        new Date(row.createdAt).toLocaleDateString('en-GB'),
+        new Date(row.confirmedAt || row.createdAt).toLocaleDateString('en-GB'),
         row.transactionId || `TXN-${String(row._id).slice(-8).toUpperCase()}`,
         `${row.studentId?.name || 'Deleted account'}\n${row.studentId?.email || ''}`,
         row.courseId?.title || 'Deleted course',
@@ -474,9 +509,10 @@ async function createRazorpayOrder(req, res, next) {
       });
     } else {
       enrollment.attempts = (enrollment.attempts || 1) + 1;
-      if (!enrollment.transactionId) enrollment.transactionId = Enrollment.generateTransactionId();
+      enrollment.transactionId = Enrollment.generateTransactionId();
       enrollment.history.push({ status: 'pending', note: `Online checkout started (attempt ${enrollment.attempts})` });
     }
+    const checkoutDate = new Date();
     Object.assign(enrollment, {
       status: 'pending',
       amount,
@@ -484,6 +520,7 @@ async function createRazorpayOrder(req, res, next) {
       method: 'razorpay',
       gateway: 'razorpay',
       failureReason: '',
+      createdAt: checkoutDate,
     });
 
     const order = await razorpay.createOrder(payments, {
@@ -494,6 +531,12 @@ async function createRazorpayOrder(req, res, next) {
     });
     enrollment.gatewayOrderId = order.id;
     await enrollment.save();
+
+    // Ensure MongoDB collection createdAt reflects checkoutDate even on reused document
+    await Enrollment.collection.updateOne(
+      { _id: enrollment._id },
+      { $set: { createdAt: checkoutDate } }
+    );
 
     res.json({
       keyId: payments.razorpayKeyId,

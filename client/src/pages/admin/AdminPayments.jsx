@@ -275,9 +275,9 @@ export default function AdminPayments() {
                     <Fragment key={payment._id}>
                       <tr>
                         <td className="whitespace-nowrap">
-                          <p className="text-[13px]">{formatDate(payment.createdAt)}</p>
+                          <p className="text-[13px]">{formatDate(payment.confirmedAt || payment.createdAt)}</p>
                           <p className="text-[11.5px] text-ink-400">
-                            {new Date(payment.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                            {new Date(payment.confirmedAt || payment.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </td>
                         <td>
