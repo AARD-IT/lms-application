@@ -15,3 +15,4 @@ router.patch('/:ticketId/status', ...staff, ticketController.updateTicketStatus)
 router.post('/:ticketId/reply', ...staff, ticketController.adminReply);
 
 module.exports = router;
+
