@@ -231,6 +231,7 @@ router.patch('/notifications/read-all', requireAuth, notificationController.mark
 
 // --- upcoming events (publicly browsable) ---
 router.get('/events', optionalAuth, eventController.listEvents);
+router.get('/events/announcement', optionalAuth, eventController.getLatestAnnouncement);
 router.get('/events/:id', optionalAuth, eventController.getEvent);
 
 // --- admin: events ---

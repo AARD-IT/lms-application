@@ -8,12 +8,27 @@ const { learnerIdsWithAccess } = require('../services/enrolmentService');
 function buildFields(body = {}) {
   const fields = {};
 
-  for (const key of ['title', 'summary', 'location', 'joinUrl', 'host']) {
+  for (const key of ['title', 'summary', 'location', 'joinUrl', 'host', 'thumbnailUrl']) {
     if (body[key] !== undefined) fields[key] = String(body[key]).trim();
   }
 
   if (body.type !== undefined) fields.type = String(body.type);
   if (body.published !== undefined) fields.published = Boolean(body.published);
+
+  if (body.mode !== undefined) {
+    const cleanMode = String(body.mode).toLowerCase().trim();
+    if (['online', 'offline', 'hybrid'].includes(cleanMode)) {
+      fields.mode = cleanMode;
+    }
+  } else if (body.location !== undefined) {
+    const loc = String(body.location).toLowerCase();
+    if (loc.includes('hybrid')) fields.mode = 'hybrid';
+    else if (loc.includes('offline') || loc.includes('campus') || loc.includes('hall') || loc.includes('office') || loc.includes('room')) {
+      fields.mode = 'offline';
+    } else {
+      fields.mode = 'online';
+    }
+  }
 
   if (body.descriptionHtml !== undefined) {
     fields.descriptionHtml = sanitizeHtml(String(body.descriptionHtml));
@@ -42,7 +57,7 @@ function buildFields(body = {}) {
 const JOIN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function forStudent(event) {
-  const json = event.toJSON();
+  const json = event.toJSON ? event.toJSON() : { ...event };
   const startsAt = new Date(json.startsAt).getTime();
   const withinWindow = startsAt - Date.now() <= JOIN_WINDOW_MS;
 
@@ -50,11 +65,67 @@ function forStudent(event) {
     delete json.joinUrl;
     json.joinUrlAvailableAt = new Date(startsAt - JOIN_WINDOW_MS);
   }
+
+  if (!json.mode) {
+    const loc = String(json.location || '').toLowerCase();
+    if (loc.includes('hybrid')) json.mode = 'hybrid';
+    else if (loc.includes('offline') || loc.includes('campus') || loc.includes('hall') || loc.includes('office')) {
+      json.mode = 'offline';
+    } else {
+      json.mode = 'online';
+    }
+  }
+
   return json;
 }
 
+/** Sends student notification when an event is published or announced */
+async function sendEventNotification(event) {
+  try {
+    const recipients = event.courseId ? await learnerIdsWithAccess(event.courseId) : await activeLearnerIds();
+    if (!recipients || !recipients.length) return;
+
+    const starts = new Date(event.startsAt);
+    const dateStr = starts.toLocaleDateString('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const startTimeStr = starts.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const endTimeStr = event.endsAt
+      ? new Date(event.endsAt).toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        })
+      : '';
+    const timeSpan = endTimeStr ? `${startTimeStr} – ${endTimeStr}` : startTimeStr;
+    const modeLabel = event.mode ? `[${event.mode.toUpperCase()}]` : '';
+    const locInfo = event.location ? ` · ${event.location}` : '';
+
+    await notifyUsers(
+      recipients,
+      {
+        type: 'event',
+        title: `New Event: ${event.title}`,
+        message: `${modeLabel} ${dateStr} at ${timeSpan}${locInfo}. ${event.summary || 'Click to view event details.'}`,
+        courseId: event.courseId || undefined,
+        link: `/events?id=${event._id}`,
+      },
+      { setting: 'learner.newEvent' }
+    );
+  } catch (err) {
+    console.error('[EventNotification] Error notifying learners:', err.message);
+  }
+}
+
 /**
- * GET /api/events?scope=upcoming|past|all
+ * GET /api/events?scope=upcoming|ongoing|past|all
  * Public: the events list is part of the marketing surface.
  */
 async function listEvents(req, res, next) {
@@ -66,15 +137,48 @@ async function listEvents(req, res, next) {
     let sort = { startsAt: 1 };
 
     if (scope === 'upcoming') {
-      // An event that has started but not finished still counts as current.
       filter.$or = [{ startsAt: { $gte: now } }, { endsAt: { $gte: now } }];
+    } else if (scope === 'ongoing') {
+      filter.startsAt = { $lte: now };
+      filter.$or = [{ endsAt: { $gte: now } }, { endsAt: null }];
     } else if (scope === 'past') {
-      filter.startsAt = { $lt: now };
+      filter.$or = [
+        { endsAt: { $lt: now } },
+        { endsAt: null, startsAt: { $lt: now } },
+      ];
+      sort = { startsAt: -1 };
+    } else if (scope === 'all') {
       sort = { startsAt: -1 };
     }
 
-    const events = await Event.find(filter).sort(sort).limit(100);
+    const events = await Event.find(filter)
+      .populate('courseId', 'title')
+      .sort(sort)
+      .limit(100);
+
     res.json(events.map(forStudent));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/events/announcement
+ * Returns the newest published upcoming or ongoing event for the dashboard announcement card.
+ */
+async function getLatestAnnouncement(_req, res, next) {
+  try {
+    const now = new Date();
+    // Prioritize newest active upcoming or ongoing event
+    const event = await Event.findOne({
+      published: true,
+      $or: [{ startsAt: { $gte: now } }, { endsAt: { $gte: now } }],
+    })
+      .populate('courseId', 'title')
+      .sort({ createdAt: -1, startsAt: 1 });
+
+    if (!event) return res.json({ event: null });
+    res.json({ event: forStudent(event) });
   } catch (err) {
     next(err);
   }
@@ -113,24 +217,8 @@ async function createEvent(req, res, next) {
     const event = await Event.create({ ...fields, createdBy: req.user._id });
 
     // Announce it, either to one course's students or to everyone.
-    if (req.body?.notifyStudents && event.published) {
-      // Course grants plus Full Access learners, or everyone for a general event.
-      const recipients = event.courseId ? await learnerIdsWithAccess(event.courseId) : await activeLearnerIds();
-
-      await notifyUsers(
-        recipients,
-        {
-          type: 'event',
-          title: 'New event added',
-          message: `${event.title} — ${new Date(event.startsAt).toLocaleString('en-GB', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-          })}${event.location ? ` · ${event.location}` : ''}`,
-          courseId: event.courseId || undefined,
-          link: '/events',
-        },
-        { setting: 'learner.newEvent' }
-      );
+    if (event.published && req.body?.notifyStudents !== false) {
+      await sendEventNotification(event);
     }
 
     await activity.log(req, {
@@ -150,11 +238,29 @@ async function createEvent(req, res, next) {
 /** PUT /api/admin/events/:id */
 async function updateEvent(req, res, next) {
   try {
-    const event = await Event.findByIdAndUpdate(req.params.id, buildFields(req.body), {
+    const existing = await Event.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Event not found' });
+
+    const wasPublished = existing.published;
+    const fields = buildFields(req.body);
+
+    const event = await Event.findByIdAndUpdate(req.params.id, fields, {
       new: true,
       runValidators: true,
     });
-    if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    if (event.published && (req.body.notifyStudents || (!wasPublished && req.body.notifyStudents !== false))) {
+      await sendEventNotification(event);
+    }
+
+    await activity.log(req, {
+      category: 'course',
+      action: 'event.updated',
+      summary: `Updated event "${event.title}"${event.published ? '' : ' (draft)'}`,
+      entityType: 'event',
+      entityId: event._id,
+    });
+
     res.json(event);
   } catch (err) {
     next(err);
@@ -175,6 +281,7 @@ async function deleteEvent(req, res, next) {
 module.exports = {
   listEvents,
   getEvent,
+  getLatestAnnouncement,
   listAllEvents,
   createEvent,
   updateEvent,

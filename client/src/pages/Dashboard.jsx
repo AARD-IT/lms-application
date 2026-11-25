@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Award, BookOpen, Clock, GraduationCap, Trophy } from 'lucide-react';
 import { usePageMeta } from '../components/layout/DashboardLayout.jsx';
 import StatsCard from '../components/dashboard/StatsCard.jsx';
+import EventAnnouncement from '../components/dashboard/EventAnnouncement.jsx';
 import ContinueLearning from '../components/dashboard/ContinueLearning.jsx';
 import RecentActivity from '../components/dashboard/RecentActivity.jsx';
 import RecommendedCourses from '../components/dashboard/RecommendedCourses.jsx';
@@ -112,6 +113,8 @@ export default function Dashboard() {
           <StatsCard key={stat.label} {...stat} />
         ))}
       </section>
+
+      <EventAnnouncement />
 
       {continueCourse ? (
         <ContinueLearning

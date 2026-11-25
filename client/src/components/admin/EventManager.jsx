@@ -36,6 +36,7 @@ const TYPES = [
 const EMPTY = {
   title: '',
   type: 'webinar',
+  mode: 'online',
   summary: '',
   descriptionHtml: '',
   startsAt: '',
@@ -44,6 +45,7 @@ const EMPTY = {
   joinUrl: '',
   host: '',
   courseId: '',
+  thumbnailUrl: '',
   published: true,
 };
 
@@ -102,6 +104,7 @@ export default function EventManager({ courses = [], onChanged }) {
     setForm({
       title: event.title || '',
       type: event.type || 'webinar',
+      mode: event.mode || 'online',
       summary: event.summary || '',
       descriptionHtml: event.descriptionHtml || '',
       startsAt: toLocalInput(event.startsAt),
@@ -110,6 +113,7 @@ export default function EventManager({ courses = [], onChanged }) {
       joinUrl: event.joinUrl || '',
       host: event.host || '',
       courseId: event.courseId || '',
+      thumbnailUrl: event.thumbnailUrl || '',
       published: event.published !== false,
     });
   };
@@ -219,6 +223,17 @@ export default function EventManager({ courses = [], onChanged }) {
               </select>
             </div>
 
+            <div>
+              <label className="field-label" htmlFor="event-mode">
+                Mode
+              </label>
+              <select id="event-mode" className="field-input" value={form.mode} onChange={set('mode')}>
+                <option value="online">Online</option>
+                <option value="offline">In-Person / Offline</option>
+                <option value="hybrid">Hybrid</option>
+              </select>
+            </div>
+
             <Input
               label="Starts at"
               type="datetime-local"
@@ -233,7 +248,7 @@ export default function EventManager({ courses = [], onChanged }) {
               onChange={set('endsAt')}
             />
 
-            <Input label="Location" value={form.location} onChange={set('location')} placeholder="Online / Zoom / Campus" />
+            <Input label="Location / Venue" value={form.location} onChange={set('location')} placeholder="Online / Zoom / Bangalore Campus" />
             <Input label="Host (optional)" value={form.host} onChange={set('host')} placeholder="e.g. Vasanth Kumar" />
 
             <Input
@@ -242,6 +257,13 @@ export default function EventManager({ courses = [], onChanged }) {
               onChange={set('joinUrl')}
               placeholder="https://meet.google.com/…"
               hint="Revealed to students 24 hours before the start time."
+            />
+
+            <Input
+              label="Banner / Thumbnail URL (optional)"
+              value={form.thumbnailUrl}
+              onChange={set('thumbnailUrl')}
+              placeholder="https://images.unsplash.com/…"
             />
 
             <div>
@@ -293,17 +315,15 @@ export default function EventManager({ courses = [], onChanged }) {
                 Published
               </label>
 
-              {!editingId && (
-                <label className="flex items-center gap-2.5 text-[13px] text-ink-700">
-                  <input
-                    type="checkbox"
-                    checked={notifyStudents}
-                    onChange={(e) => setNotifyStudents(e.target.checked)}
-                    className="h-4 w-4 rounded border-ink-300 text-primary-600 focus:ring-primary-500/30"
-                  />
-                  Notify learners
-                </label>
-              )}
+              <label className="flex items-center gap-2.5 text-[13px] text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={notifyStudents}
+                  onChange={(e) => setNotifyStudents(e.target.checked)}
+                  className="h-4 w-4 rounded border-ink-300 text-primary-600 focus:ring-primary-500/30"
+                />
+                Notify learners {editingId ? 'about updates' : ''}
+              </label>
             </div>
 
             <Button type="submit" size="sm" loading={saving} disabled={saving}>
@@ -327,6 +347,7 @@ export default function EventManager({ courses = [], onChanged }) {
           {events.map((event) => {
             const starts = new Date(event.startsAt);
             const isPast = starts.getTime() < now;
+            const mode = (event.mode || 'online').toLowerCase();
 
             return (
               <div
@@ -336,6 +357,9 @@ export default function EventManager({ courses = [], onChanged }) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-medium text-ink-900">{event.title}</p>
+                    <Badge tone={mode === 'offline' ? 'warning' : mode === 'hybrid' ? 'primary' : 'success'}>
+                      {mode.toUpperCase()}
+                    </Badge>
                     {event.published === false && <Badge tone="neutral">Draft</Badge>}
                     {isPast && <Badge tone="neutral">Past</Badge>}
                   </div>

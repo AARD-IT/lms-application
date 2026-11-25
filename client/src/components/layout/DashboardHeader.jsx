@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Award,
   Bell,
+  CalendarClock,
   CheckCheck,
   ChevronDown,
   LayoutGrid,
@@ -224,26 +225,55 @@ export default function DashboardHeader({ title, subtitle, onMenuClick = () => {
                   {notifications.length === 0 ? (
                     <p className="px-3 py-6 text-center text-sm text-ink-500">You're all caught up.</p>
                   ) : (
-                    notifications.slice(0, 8).map((notification) => (
-                      <button
-                        key={notification.id}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => onNotificationClick(notification)}
-                        className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-ink-50 ${
-                          notification.read ? '' : 'bg-primary-50/60'
-                        }`}
-                      >
-                        <span className="flex w-full items-center gap-2 font-medium text-ink-900">
-                          {!notification.read && (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary-600" aria-hidden="true" />
+                    notifications.slice(0, 8).map((notification) => {
+                      const isEvent = notification.type === 'event';
+                      return (
+                        <button
+                          key={notification.id}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => onNotificationClick(notification)}
+                          className={`flex w-full flex-col items-start gap-1 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-ink-50 ${
+                            notification.read
+                              ? ''
+                              : isEvent
+                              ? 'bg-amber-50/70 border-l-2 border-amber-500'
+                              : 'bg-primary-50/60'
+                          }`}
+                        >
+                          <div className="flex w-full items-center justify-between gap-1.5">
+                            <span className="flex min-w-0 items-center gap-1.5 font-medium text-ink-900">
+                              {!notification.read && (
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                    isEvent ? 'bg-amber-500' : 'bg-primary-600'
+                                  }`}
+                                  aria-hidden="true"
+                                />
+                              )}
+                              {isEvent && (
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                                  <CalendarClock className="h-3 w-3" aria-hidden="true" />
+                                  Event
+                                </span>
+                              )}
+                              <span className="truncate">{notification.title}</span>
+                            </span>
+                            <span className="shrink-0 text-[11px] text-ink-400">
+                              {timeAgo(notification.createdAt)}
+                            </span>
+                          </div>
+                          <span className="line-clamp-2 text-xs text-ink-600 pl-0.5">
+                            {notification.message}
+                          </span>
+                          {isEvent && (
+                            <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 hover:text-primary-700">
+                              View Event &rarr;
+                            </span>
                           )}
-                          <span className="truncate">{notification.title}</span>
-                        </span>
-                        <span className="line-clamp-2 text-xs text-ink-500">{notification.message}</span>
-                        <span className="text-[11px] text-ink-400">{timeAgo(notification.createdAt)}</span>
-                      </button>
-                    ))
+                        </button>
+                      );
+                    })
                   )}
                 </div>
 
