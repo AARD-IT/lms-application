@@ -26,12 +26,21 @@ const eventSchema = new mongoose.Schema(
     // Optional: a one-off talk has no meaningful end time.
     endsAt: { type: Date },
 
+    // Event mode: online | offline | hybrid
+    mode: {
+      type: String,
+      enum: ['online', 'offline', 'hybrid'],
+      default: 'online',
+    },
+
     // "Online", "Zoom", a campus name — free text so it suits either.
     location: { type: String, default: '' },
     // Joining link. Shown only once the event is close, see the controller.
     joinUrl: { type: String, default: '' },
 
     host: { type: String, default: '' },
+    // Optional thumbnail or banner image
+    thumbnailUrl: { type: String, default: '' },
     // Optional tie to a course, so it can be targeted at that course's students.
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course' },
 

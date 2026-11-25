@@ -370,6 +370,8 @@ export const getMyEnrollments = () => api.get('/enrollments/mine').then((r) => r
 // --- upcoming events --------------------------------------------------------
 export const getEvents = (scope = 'upcoming') =>
   api.get('/events', { params: { scope } }).then((r) => r.data);
+export const getLatestEventAnnouncement = () =>
+  api.get('/events/announcement').then((r) => r.data);
 export const getEvent = (id) => api.get(`/events/${id}`).then((r) => r.data);
 
 // --- admin: events ----------------------------------------------------------

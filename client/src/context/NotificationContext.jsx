@@ -180,9 +180,39 @@ export function NotificationProvider({ children }) {
     markAllNotificationsRead().catch(() => {});
   }, []);
 
+  const unreadEventsCount = useMemo(
+    () => notifications.filter((n) => n.type === 'event' && !n.read).length,
+    [notifications]
+  );
+
+  const eventNotifications = useMemo(
+    () => notifications.filter((n) => n.type === 'event'),
+    [notifications]
+  );
+
   const value = useMemo(
-    () => ({ notifications, unreadCount, markRead, markAllRead, loadMore, hasMore, loadingMore }),
-    [notifications, unreadCount, markRead, markAllRead, loadMore, hasMore, loadingMore]
+    () => ({
+      notifications,
+      unreadCount,
+      unreadEventsCount,
+      eventNotifications,
+      markRead,
+      markAllRead,
+      loadMore,
+      hasMore,
+      loadingMore,
+    }),
+    [
+      notifications,
+      unreadCount,
+      unreadEventsCount,
+      eventNotifications,
+      markRead,
+      markAllRead,
+      loadMore,
+      hasMore,
+      loadingMore,
+    ]
   );
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;

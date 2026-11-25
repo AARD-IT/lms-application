@@ -32,7 +32,7 @@ const primaryLinks = [
   { to: '/resources', label: 'Resources', icon: FileText },
   { to: '/wishlist', label: 'Wishlist', icon: Heart, badge: 'wishlist' },
   { to: '/certificates', label: 'Certificates', icon: Award },
-  { to: '/events', label: 'Upcoming Events', icon: CalendarClock },
+  { to: '/events', label: 'Upcoming Events', icon: CalendarClock, badge: 'events' },
   { to: '/tasks', label: 'Task Submission', icon: ClipboardList },
   { to: '/raise-ticket', label: 'Raise Ticket', icon: LifeBuoy },
   { to: '/my-tickets', label: 'My Tickets', icon: Ticket },
@@ -48,10 +48,10 @@ const accountLinks = [
 function Nav({ onNavigate, onClose }) {
   const { signOut, isAdmin } = useAuth();
   const { count } = useWishlist();
-  const { unreadCount } = useNotifications();
+  const { unreadCount, unreadEventsCount } = useNotifications();
 
   // Which running total, if any, a link shows next to its label.
-  const badgeCounts = { wishlist: count, notifications: unreadCount };
+  const badgeCounts = { wishlist: count, notifications: unreadCount, events: unreadEventsCount };
 
   const renderLink = ({ to, label, icon: Icon, badge }) => {
     const badgeCount = badge ? badgeCounts[badge] : 0;
@@ -67,13 +67,15 @@ function Nav({ onNavigate, onClose }) {
         <span className="flex-1">{label}</span>
         {badgeCount > 0 && (
           <span
-            className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
-              badge === 'notifications'
+            className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums shadow-sm ${
+              badge === 'events'
+                ? 'bg-amber-500 text-white'
+                : badge === 'notifications'
                 ? 'bg-primary-600 text-white'
                 : 'bg-ink-100 text-ink-600'
             }`}
           >
-            {badgeCount > 9 && badge === 'notifications' ? '9+' : badgeCount}
+            {badgeCount > 9 && (badge === 'notifications' || badge === 'events') ? '9+' : badgeCount}
           </span>
         )}
       </NavLink>
