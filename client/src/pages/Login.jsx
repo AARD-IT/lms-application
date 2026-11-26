@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Lock, Mail } from 'lucide-react';
 import AuthLayout from '../components/layout/AuthLayout.jsx';
@@ -49,6 +49,24 @@ export default function Login() {
   if (isAuthenticated) {
     return <Navigate to={landingFor(student)} replace />;
   }
+
+  // Check if user was logged out due to logging in on another device
+  useEffect(() => {
+    try {
+      const storedMsg = sessionStorage.getItem('lms.session_terminated_message');
+      if (storedMsg) {
+        setSubmitError(storedMsg);
+        sessionStorage.removeItem('lms.session_terminated_message');
+        return;
+      }
+    } catch {
+      // ignore in restricted environments
+    }
+
+    if (params.get('reason') === 'session_terminated') {
+      setSubmitError('You have been logged out because your account was logged in on another device.');
+    }
+  }, [params]);
 
   const setField = (name) => (event) => {
     const value = event.target.type === 'checkbox' ? event.target.checked : event.target.value;

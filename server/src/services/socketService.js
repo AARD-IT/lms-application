@@ -47,11 +47,18 @@ function initSocket(httpServer, isOriginAllowed) {
     try {
       const user = await User.findById(decoded.id);
       if (!user) return refuse('User no longer exists', 'AUTH_FAILED');
-      // Same rules as the REST API: suspended, or signed out by a password change.
+      // Same rules as the REST API: suspended, signed out by a password change,
+      // or invalidated by a newer login on another device.
       const rejection = rejectionFor(user, decoded);
-      if (rejection) return refuse(rejection, 'AUTH_FAILED');
+      if (rejection) {
+        return refuse(
+          typeof rejection === 'string' ? rejection : rejection.error,
+          rejection.code || 'AUTH_FAILED'
+        );
+      }
 
       socket.userId = String(user._id);
+      socket.sessionId = decoded.sessionId || null;
       next();
     } catch (err) {
       console.error('[socket] could not check the session:', err.message);
@@ -64,6 +71,29 @@ function initSocket(httpServer, isOriginAllowed) {
   });
 
   return io;
+}
+
+/**
+ * Notifies existing connected sockets for this user that their session was terminated
+ * due to a login on another device, then forcefully disconnects those sockets.
+ */
+function notifySessionTerminated(userId, exceptSessionId = null) {
+  if (!io) return;
+  const room = userRoom(userId);
+  const roomSockets = io.sockets.adapter.rooms.get(room);
+  if (roomSockets) {
+    for (const socketId of Array.from(roomSockets)) {
+      const s = io.sockets.sockets.get(socketId);
+      if (s && (!exceptSessionId || s.sessionId !== exceptSessionId)) {
+        s.emit('session_terminated', {
+          code: 'SESSION_TERMINATED',
+          reason: 'another_device',
+          message: 'You have been logged out because your account was logged in on another device.',
+        });
+        s.disconnect(true);
+      }
+    }
+  }
 }
 
 /** Emits `notification` with the given payload to a single user, if connected. */
@@ -84,4 +114,4 @@ function emitToAll(payload) {
   io.emit('notification', payload);
 }
 
-module.exports = { initSocket, emitToUser, emitToUsers, emitToAll };
+module.exports = { initSocket, emitToUser, emitToUsers, emitToAll, notifySessionTerminated };

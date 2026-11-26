@@ -36,7 +36,7 @@ function mergeLatest(previous, latest) {
 }
 
 export function NotificationProvider({ children }) {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, terminateSession } = useAuth();
 
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -105,6 +105,11 @@ export function NotificationProvider({ children }) {
     });
 
     socket.on('connect_error', (err) => {
+      // If another device logged in, the handshake is rejected with SESSION_TERMINATED
+      if (err?.data?.code === 'SESSION_TERMINATED' || err?.message?.toLowerCase().includes('another device')) {
+        terminateSession?.(err?.message || 'You have been logged out because your account was logged in on another device.');
+        return;
+      }
       // A temporary failure: Socket.IO keeps retrying on its own.
       if (socket.active) return;
       // The server refused the handshake. A bad session is dealt with by the
@@ -117,6 +122,12 @@ export function NotificationProvider({ children }) {
         if (!disposed) socket.connect();
       }, retryDelay);
       retryDelay = Math.min(retryDelay * 2, HANDSHAKE_RETRY_MS.max);
+    });
+
+    socket.on('session_terminated', (data) => {
+      terminateSession?.(
+        data?.message || 'You have been logged out because your account was logged in on another device.'
+      );
     });
 
     socket.on('notification', (notification) => {

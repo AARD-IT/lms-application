@@ -47,6 +47,12 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: { type: Date },
     failedLoginAttempts: { type: Number, default: 0 },
     lockUntil: { type: Date },
+
+    // --- single-device session tracking ------------------------------------
+    // Holds the unique identifier of the user's active session.
+    // When a login occurs on another device/browser, this is updated,
+    // invalidating any previous session.
+    currentSessionId: { type: String, default: null, index: true },
   },
   { timestamps: true }
 );
@@ -87,6 +93,7 @@ userSchema.set('toJSON', {
     delete ret.failedLoginAttempts;
     delete ret.lockUntil;
     delete ret.passwordChangedAt;
+    delete ret.currentSessionId;
     if (ret.role === 'admin') ret.adminRole = ret.adminRole || 'super_admin';
     // Map _id to id to match the expected frontend shape for 'student'
     ret.id = ret._id;

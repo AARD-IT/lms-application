@@ -7,16 +7,34 @@ const ADMIN_EMAIL = 'analyticsavenue@gmail.com';
 /**
  * Why a user who presented a valid token is still refused, or null if they
  * may proceed: the account was suspended, or the password changed after the
- * token was issued (which is how a reset signs out every other session).
+ * token was issued (which is how a reset signs out every other session), or
+ * the account was signed into on another device (single-device login).
  */
 function rejectionFor(user, decoded) {
-  if (user.status === 'suspended') return 'Your account is suspended. Please contact support.';
+  if (user.status === 'suspended') {
+    return {
+      error: 'Your account is suspended. Please contact support.',
+      code: 'ACCOUNT_SUSPENDED',
+    };
+  }
   if (user.passwordChangedAt && decoded.iat) {
     // A JWT's iat has one-second resolution; allow that much slack so the
     // token issued in the same second as the change still works.
     if (decoded.iat * 1000 < user.passwordChangedAt.getTime() - 1000) {
-      return 'Your password was changed. Please sign in again.';
+      return {
+        error: 'Your password was changed. Please sign in again.',
+        code: 'PASSWORD_CHANGED',
+      };
     }
+  }
+  // Single-device login enforcement:
+  // If user has an active session ID recorded and the token does not match it,
+  // this session is no longer active and has been replaced by a newer login.
+  if (user.currentSessionId && (!decoded.sessionId || decoded.sessionId !== user.currentSessionId)) {
+    return {
+      error: 'You have been logged out because your account was logged in on another device.',
+      code: 'SESSION_TERMINATED',
+    };
   }
   return null;
 }
@@ -45,9 +63,15 @@ async function requireAuth(req, res, next) {
     }
 
     const rejection = rejectionFor(user, decoded);
-    if (rejection) return res.status(401).json({ error: rejection });
+    if (rejection) {
+      return res.status(401).json({
+        error: typeof rejection === 'string' ? rejection : rejection.error,
+        code: rejection.code || 'UNAUTHORIZED',
+      });
+    }
 
     req.user = user;
+    req.sessionId = decoded.sessionId;
     
     // Also attach to req.student for backwards compatibility with existing mock auth endpoints
     req.student = user;
@@ -84,6 +108,7 @@ async function optionalAuth(req, _res, next) {
     const user = await User.findById(decoded.id);
     if (user && !rejectionFor(user, decoded)) {
       req.user = user;
+      req.sessionId = decoded.sessionId;
       req.student = user;
     }
     next();

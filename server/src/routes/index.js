@@ -45,7 +45,8 @@ const superAdmin = [requireAuth, requireSuperAdmin];
 // --- auth ---
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
-router.post('/auth/logout', authController.logout);
+router.post('/auth/logout', optionalAuth, authController.logout);
+router.get('/auth/session', requireAuth, authController.checkSession);
 router.post('/auth/forgot-password', authController.forgotPassword);
 router.post('/auth/reset-password', authController.resetPassword);
 

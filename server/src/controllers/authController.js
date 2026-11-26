@@ -5,6 +5,7 @@ const activity = require('../services/activityService');
 const mailService = require('../services/mailService');
 const settingsService = require('../services/settingsService');
 const { notifyAdmins } = require('../services/notificationService');
+const { notifySessionTerminated } = require('../services/socketService');
 const { appUrl } = require('../utils/url');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret-key-change-in-prod';
@@ -16,8 +17,10 @@ const LOCK_MINUTES = 15;
 const RESET_TOKEN_MINUTES = 60;
 const MIN_PASSWORD_LENGTH = 8;
 
-function generateToken(user) {
-  return jwt.sign({ id: user._id, email: user.email }, JWT_SECRET, {
+function generateToken(user, sessionId = null) {
+  const payload = { id: user._id, email: user.email };
+  if (sessionId) payload.sessionId = sessionId;
+  return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
   });
 }
@@ -42,6 +45,8 @@ async function register(req, res, next) {
       return res.status(400).json({ error: 'Email is already registered' });
     }
 
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+
     // Only name/email/password/phone are taken from the body — never `role`.
     const user = new User({
       name: String(name).trim().slice(0, 80),
@@ -49,6 +54,7 @@ async function register(req, res, next) {
       password,
       phone: String(phone || '').trim().slice(0, 20),
       lastLoginAt: new Date(),
+      currentSessionId: sessionId,
     });
     await user.save();
 
@@ -62,7 +68,7 @@ async function register(req, res, next) {
       { setting: 'admin.learnerRegistered' }
     );
 
-    const token = generateToken(user);
+    const token = generateToken(user, sessionId);
     res.status(201).json({ student: user, token });
   } catch (err) {
     next(err);
@@ -119,10 +125,17 @@ async function login(req, res, next) {
       return res.status(403).json({ error: 'Your account is suspended. Please contact support.' });
     }
 
+    // Generate a new unique session identifier for single-device login enforcement.
+    // Any prior session from another device/browser will be rejected and disconnected.
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+    user.currentSessionId = sessionId;
     user.failedLoginAttempts = 0;
     user.lockUntil = undefined;
     user.lastLoginAt = new Date();
     await user.save();
+
+    // Invalidate existing sessions/sockets for this user on other devices
+    notifySessionTerminated(user._id, sessionId);
 
     if (user.role === 'admin') {
       await activity.log(
@@ -137,7 +150,7 @@ async function login(req, res, next) {
       );
     }
 
-    const token = generateToken(user);
+    const token = generateToken(user, sessionId);
     res.json({ student: user, token });
   } catch (err) {
     next(err);
@@ -190,8 +203,13 @@ async function changePassword(req, res, next) {
       return res.status(400).json({ error: 'Your current password is not correct' });
     }
 
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
     req.user.password = newPassword;
+    req.user.currentSessionId = sessionId;
     await req.user.save();
+
+    // Terminate older sessions across other devices
+    notifySessionTerminated(req.user._id, sessionId);
 
     await activity.log(req, {
       category: 'security',
@@ -202,8 +220,8 @@ async function changePassword(req, res, next) {
     });
 
     // The change revokes older tokens, this one included — hand back a fresh
-    // one so the session that made the change stays signed in.
-    res.json({ success: true, token: generateToken(req.user) });
+    // one with the new sessionId so the session that made the change stays signed in.
+    res.json({ success: true, token: generateToken(req.user, sessionId) });
   } catch (err) {
     next(err);
   }
@@ -323,9 +341,21 @@ function escapeHtml(value) {
 }
 
 async function logout(req, res) {
-  // Real stateless JWTs can't be easily invalidated server-side without a blocklist.
-  // We rely on the client to delete the token.
+  try {
+    // If authenticated and this session is the active session, clear it on the server
+    if (req.user && req.sessionId && req.user.currentSessionId === req.sessionId) {
+      req.user.currentSessionId = null;
+      await req.user.save();
+    }
+  } catch (err) {
+    console.error('[auth] error invalidating session on logout:', err.message);
+  }
   res.json({ success: true, message: 'Logged out successfully' });
+}
+
+/** GET /api/auth/session — returns active session status under requireAuth */
+async function checkSession(req, res) {
+  res.json({ valid: true, sessionId: req.sessionId });
 }
 
 module.exports = {
@@ -338,6 +368,7 @@ module.exports = {
   resetPassword,
   sendResetLink,
   logout,
+  checkSession,
   generateToken,
   MIN_PASSWORD_LENGTH,
 };

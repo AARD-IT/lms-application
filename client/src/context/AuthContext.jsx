@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as authApi from '../api/client';
-import { getMe, setAuthToken, setUnauthorizedHandler, updateMe } from '../api/client';
+import { checkSession, getMe, setAuthToken, setUnauthorizedHandler, updateMe } from '../api/client';
 
 /**
  * Single source of truth for "who is signed in".
@@ -140,18 +140,87 @@ export function AuthProvider({ children }) {
   }, []);
 
   /**
-   * Any 401 from an authenticated request clears the session, so an expired
-   * token drops the student at the sign-in page instead of showing a broken
-   * page on every protected route. ProtectedRoute handles the redirect.
+   * Called when a session is invalidated because the user logged in on another device/browser.
+   * Clears all local auth tokens and session state, saves the message, and redirects to login.
+   */
+  const terminateSession = useCallback((reason) => {
+    const message =
+      (typeof reason === 'string' ? reason : reason?.error) ||
+      'You have been logged out because your account was logged in on another device.';
+
+    try {
+      sessionStorage.setItem('lms.session_terminated_message', message);
+    } catch {
+      // ignore in restricted environments
+    }
+
+    setAuthToken(null);
+    setSession(null);
+    writeStoredSession(null);
+
+    // If currently on an authenticated page (or any non-login page), redirect immediately
+    if (!window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login?reason=session_terminated';
+    }
+  }, []);
+
+  /**
+   * Any 401 from an authenticated request clears the session. If the rejection
+   * was due to single-device login termination, trigger the full termination flow.
    */
   useEffect(() => {
-    setUnauthorizedHandler(() => {
-      setAuthToken(null);
-      setSession(null);
-      writeStoredSession(null);
+    setUnauthorizedHandler((errorData) => {
+      const isTerminated =
+        errorData?.code === 'SESSION_TERMINATED' ||
+        (typeof errorData?.error === 'string' &&
+          errorData.error.toLowerCase().includes('another device'));
+
+      if (isTerminated) {
+        terminateSession(errorData?.error);
+      } else {
+        setAuthToken(null);
+        setSession(null);
+        writeStoredSession(null);
+      }
     });
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [terminateSession]);
+
+  /**
+   * Fallback session validation mechanism:
+   * Periodically checks session validity and checks when tab visibility returns.
+   * If another device logged in while this device was idle or disconnected,
+   * this immediately detects the invalidated session and triggers logout.
+   */
+  useEffect(() => {
+    if (!session?.token) return;
+
+    const validateActiveSession = async () => {
+      try {
+        await checkSession();
+      } catch (err) {
+        // Any 401 response is handled by the response interceptor and onUnauthorized
+      }
+    };
+
+    // Check when user returns to this browser tab/window
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        validateActiveSession();
+      }
+    };
+
+    // Heartbeat check every 30 seconds
+    const interval = setInterval(validateActiveSession, 30000);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    window.addEventListener('focus', onFocusOrVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+      window.removeEventListener('focus', onFocusOrVisible);
+    };
+  }, [session?.token]);
 
   /** Saves profile fields to the server and keeps the session in step. */
   const updateProfile = useCallback(async (patch) => {
@@ -185,12 +254,13 @@ export function AuthProvider({ children }) {
       signIn,
       signUp,
       signOut,
+      terminateSession,
       updateProfile,
       replaceToken,
       isAdmin: session?.student?.role === 'admin',
       isSuperAdmin: session?.student?.role === 'admin' && (session?.student?.adminRole || 'super_admin') === 'super_admin',
     }),
-    [session, initialising, signIn, signUp, signOut, updateProfile, replaceToken]
+    [session, initialising, signIn, signUp, signOut, terminateSession, updateProfile, replaceToken]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

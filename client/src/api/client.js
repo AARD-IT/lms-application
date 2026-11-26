@@ -118,7 +118,7 @@ api.interceptors.response.use(
     const hadToken = Boolean(api.defaults.headers.common.Authorization);
 
     if (status === 401 && !isAuthAttempt && hadToken) {
-      onUnauthorized?.();
+      onUnauthorized?.(error?.response?.data);
     }
 
     // A read that failed for connection reasons gets another go or three.
@@ -146,6 +146,7 @@ export const getHealth = () => api.get('/health').then((r) => r.data);
 export const login = (credentials) => api.post('/auth/login', credentials).then((r) => r.data);
 export const register = (payload) => api.post('/auth/register', payload).then((r) => r.data);
 export const logout = () => api.post('/auth/logout').then((r) => r.data);
+export const checkSession = () => api.get('/auth/session').then((r) => r.data);
 export const forgotPassword = (email) => api.post('/auth/forgot-password', { email }).then((r) => r.data);
 export const resetPassword = (payload) => api.post('/auth/reset-password', payload).then((r) => r.data);
 export const updateMe = (payload) => api.put('/me', payload).then((r) => r.data);
