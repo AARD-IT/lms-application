@@ -1173,7 +1173,8 @@ async function activateDevice(req, res, next) {
 
 /**
  * GET /api/auth/activation-status
- * Check activation status for currently signed-in student / device
+ * Check activation status for currently signed-in student / device.
+ * Dynamically evaluates database records across User, DeviceActivation, and Package models.
  */
 async function getActivationStatus(req, res, next) {
   try {
@@ -1181,27 +1182,53 @@ async function getActivationStatus(req, res, next) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const activation = await DeviceActivation.findOne({ studentId: req.user._id })
-      .populate('authorizedCourses', 'title thumbnail accent price category');
-
-    if (!activation) {
-      return res.json({ hasActivation: false });
-    }
+    const student = req.user;
+    const activation = await DeviceActivation.findOne({ studentId: student._id })
+      .populate('packageId', 'name slug identifier tier price description')
+      .populate('authorizedCourses', 'title thumbnail accent price category slug');
 
     const clientDeviceId = req.headers['x-device-id'];
     const isCurrentDevice = Boolean(
-      activation.activationDeviceId &&
+      activation?.activationDeviceId &&
       clientDeviceId &&
       activation.activationDeviceId === clientDeviceId
     );
 
+    // Dynamic, database-driven status determination
+    let currentStatus = 'profile_incomplete';
+    const paymentStatus = activation?.paymentStatus || 'pending';
+    const isActivated = Boolean(activation?.isActivated && activation?.status === 'activated');
+
+    if (!student.profileCompleted) {
+      currentStatus = 'profile_incomplete';
+    } else if (isActivated) {
+      currentStatus = 'activated';
+    } else if (activation?.status === 'revoked') {
+      currentStatus = 'activation_revoked';
+    } else if (activation?.status === 'pin_generated' || Boolean(activation?.pinHash)) {
+      currentStatus = 'pin_generated';
+    } else if (activation?.paymentStatus === 'verified' && activation?.packageId) {
+      currentStatus = 'package_assigned';
+    } else if (activation?.paymentStatus === 'verified') {
+      currentStatus = 'payment_verified';
+    } else {
+      currentStatus = 'payment_pending';
+    }
+
     res.json({
-      hasActivation: true,
-      status: activation.status,
-      isActivated: activation.isActivated,
-      activatedAt: activation.activatedAt,
+      hasActivation: Boolean(activation),
+      status: currentStatus,
+      rawStatus: activation?.status || 'payment_pending',
+      paymentStatus,
+      isActivated,
+      profileCompleted: Boolean(student.profileCompleted),
+      activatedAt: activation?.activatedAt || null,
       isCurrentDevice,
-      authorizedCourses: activation.authorizedCourses,
+      packageName: activation?.packageName || activation?.packageId?.name || null,
+      packageIdentifier: activation?.packageIdentifier || activation?.packageId?.identifier || null,
+      package: activation?.packageId || null,
+      authorizedCourses: activation?.authorizedCourses || [],
+      onboardingDetailsSubmittedAt: activation?.onboardingDetailsSubmittedAt || student.onboardingSubmittedAt || null,
     });
   } catch (err) {
     next(err);

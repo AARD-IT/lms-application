@@ -8,6 +8,7 @@ import {
   CheckCheck,
   ClipboardCheck,
   CreditCard,
+  KeyRound,
   ListChecks,
   Lock,
   Megaphone,
@@ -36,6 +37,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 
 /** Icon and colour per notification type. */
 const TYPES = {
+  activation_pin: { icon: KeyRound, tone: 'bg-primary-50 text-primary-600', label: 'Activation PIN' },
   access_granted: { icon: Unlock, tone: 'bg-emerald-50 text-emerald-600', label: 'Access' },
   access_revoked: { icon: Lock, tone: 'bg-red-50 text-red-600', label: 'Access' },
   new_lesson: { icon: BookOpen, tone: 'bg-primary-50 text-primary-600', label: 'Course' },
@@ -127,6 +129,7 @@ export default function Notifications() {
     // `link` is what the admin or the raising code set; the course page is
     // the fallback for notifications that only carry a courseId.
     if (notification.link) navigate(notification.link);
+    else if (notification.type === 'activation_pin') navigate('/activate');
     else if (notification.courseId) navigate(`/my-courses/${notification.courseId}`);
   };
 

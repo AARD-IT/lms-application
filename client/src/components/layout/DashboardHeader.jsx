@@ -101,6 +101,7 @@ export default function DashboardHeader({ title, subtitle, onMenuClick = () => {
     // composer), so a certificate or payment update can land on the right
     // page. Course-only notifications keep their original behaviour.
     if (notification.link) navigate(notification.link);
+    else if (notification.type === 'activation_pin') navigate('/activate');
     else if (notification.courseId) navigate(`/my-courses/${notification.courseId}`);
   };
 

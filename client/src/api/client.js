@@ -486,15 +486,31 @@ export const updateTicketStatus = (id, payload) => api.patch(`/admin/tickets/${i
 export const adminReplyToTicket = (id, payload) => api.post(`/admin/tickets/${id}/reply`, payload).then((r) => r.data);
 
 // --- onboarding & personal details ---
+let completeProfileRouteSupported = null;
+let activationStatusRouteSupported = null;
+
 // Complete profile onboarding for personal details (supports fallback if older deployed backend is in use)
 export const completeProfile = async (payload) => {
+  if (completeProfileRouteSupported === false) {
+    const fallback = await api.put('/me', {
+      ...payload,
+      profileCompleted: true,
+    });
+    return {
+      message: 'Personal details saved successfully.',
+      student: fallback.data,
+    };
+  }
+
   try {
     const response = await api.put('/auth/complete-profile', payload);
+    completeProfileRouteSupported = true;
     return response.data;
   } catch (err) {
     // If backend answers 404 (e.g. client pointed to a remote backend version not yet updated),
-    // fall back to /me to ensure learner profile update succeeds without disrupting onboarding.
+    // remember route status and fall back to /me to ensure learner profile update succeeds without disrupting onboarding.
     if (err?.response?.status === 404) {
+      completeProfileRouteSupported = false;
       const fallback = await api.put('/me', {
         ...payload,
         profileCompleted: true,
@@ -522,8 +538,48 @@ export const regeneratePackagePin = (payload) =>
 // --- device activation & PIN system (student) ---
 export const activateDevice = (payload) =>
   api.post('/auth/activate', payload).then((r) => r.data);
-export const getActivationStatus = () =>
-  api.get('/auth/activation-status').then((r) => r.data);
+
+export const getActivationStatus = async () => {
+  if (activationStatusRouteSupported === false) {
+    try {
+      const me = await api.get('/me').then((r) => r.data);
+      return {
+        hasActivation: true,
+        status: me?.profileCompleted ? 'payment_pending' : 'profile_incomplete',
+        isActivated: Boolean(me?.fullAccess),
+        paymentStatus: me?.fullAccess ? 'verified' : 'pending',
+        profileCompleted: Boolean(me?.profileCompleted),
+        authorizedCourses: [],
+      };
+    } catch {
+      return { hasActivation: false, status: 'profile_incomplete', isActivated: false };
+    }
+  }
+
+  try {
+    const response = await api.get('/auth/activation-status');
+    activationStatusRouteSupported = true;
+    return response.data;
+  } catch (err) {
+    if (err?.response?.status === 404) {
+      activationStatusRouteSupported = false;
+      try {
+        const me = await api.get('/me').then((r) => r.data);
+        return {
+          hasActivation: true,
+          status: me?.profileCompleted ? 'payment_pending' : 'profile_incomplete',
+          isActivated: Boolean(me?.fullAccess),
+          paymentStatus: me?.fullAccess ? 'verified' : 'pending',
+          profileCompleted: Boolean(me?.profileCompleted),
+          authorizedCourses: [],
+        };
+      } catch {
+        return { hasActivation: false, status: 'profile_incomplete', isActivated: false };
+      }
+    }
+    throw err;
+  }
+};
 
 // --- device activation & PIN management (admin) ---
 export const getStudentActivation = (studentId) =>

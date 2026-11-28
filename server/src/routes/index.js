@@ -63,7 +63,11 @@ router
 
 // --- device activation & PIN verification ---
 router.post('/auth/activate', activationController.activateDevice);
-router.get('/auth/activation-status', requireAuth, activationController.getActivationStatus);
+router.get(
+  ['/auth/activation-status', '/activation-status', '/activation/status'],
+  requireAuth,
+  activationController.getActivationStatus
+);
 
 // --- 3-tier course packages ---
 router.get('/packages', packageController.listPackages);

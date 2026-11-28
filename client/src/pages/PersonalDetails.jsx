@@ -236,17 +236,37 @@ export default function PersonalDetails() {
             </div>
 
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-              <Link to="/activate" className="w-full sm:w-auto">
-                <Button variant="primary" className="w-full flex items-center justify-center gap-2">
+              {activationData?.isActivated ? (
+                <Button
+                  variant="primary"
+                  to="/my-courses"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2"
+                  onClick={() => navigate('/my-courses')}
+                >
+                  <BookOpen className="h-4 w-4" />
+                  <span>Go to My Courses</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  to="/activate"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2"
+                  onClick={() => navigate('/activate')}
+                >
+                  <KeyRound className="h-4 w-4" />
                   <span>Enter Activation PIN</span>
                   <ArrowRight className="h-4 w-4" />
                 </Button>
-              </Link>
-              <Link to="/notifications" className="w-full sm:w-auto">
-                <Button variant="outline" className="w-full">
-                  Check LMS Notifications
-                </Button>
-              </Link>
+              )}
+              <Button
+                variant="outline"
+                to="/notifications"
+                className="w-full sm:w-auto"
+                onClick={() => navigate('/notifications')}
+              >
+                Check LMS Notifications
+              </Button>
               <button
                 type="button"
                 onClick={() => setSubmitted(false)}

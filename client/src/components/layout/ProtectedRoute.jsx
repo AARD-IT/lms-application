@@ -22,12 +22,22 @@ export default function ProtectedRoute() {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
+  // Allowed paths for learners who are completing onboarding, checking activation notifications, or activating
+  const allowedPreActivationPaths = [
+    '/complete-profile',
+    '/onboarding',
+    '/notifications',
+    '/activate',
+    '/student/activate',
+  ];
+
   // If learner has not completed required personal details, redirect to /complete-profile
+  // while allowing access to notification and activation routes
   if (
     student &&
     student.role !== 'admin' &&
     !student.profileCompleted &&
-    location.pathname !== '/complete-profile'
+    !allowedPreActivationPaths.includes(location.pathname)
   ) {
     return <Navigate to="/complete-profile" replace />;
   }

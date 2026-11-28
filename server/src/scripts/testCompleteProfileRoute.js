@@ -206,12 +206,46 @@ async function run() {
     assert(dbStudent2.education === 'MBA Business Analytics', 'PUT /api/me persisted education in MongoDB');
     assert(dbStudent2.city === 'Pune', 'PUT /api/me persisted city in MongoDB');
 
+    // 7. Testing Activation Status API (GET /api/auth/activation-status)
+    console.log('\n--- 7. Testing Activation Status API (GET /api/auth/activation-status) ---');
+    const noTokenActRes = await makeRequest(server, {
+      path: '/api/auth/activation-status',
+      method: 'GET',
+    });
+    assert(noTokenActRes.status === 401, 'GET /api/auth/activation-status without token returns 401');
+
+    const actStatus1 = await makeRequest(server, {
+      path: '/api/auth/activation-status',
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token1}` },
+    });
+    assert(actStatus1.status === 200, 'GET /api/auth/activation-status returns 200 OK');
+    assert(actStatus1.body.profileCompleted === true, 'Activation status reports profileCompleted: true');
+    assert(actStatus1.body.status === 'payment_pending', 'Dynamic status reports payment_pending for completed profile');
+    assert(actStatus1.body.pinHash === undefined, 'PIN hash is strictly hidden and not exposed');
+
+    // 8. Testing Activation Status Aliases
+    console.log('\n--- 8. Testing Activation Status Route Aliases ---');
+    const aliasAct1 = await makeRequest(server, {
+      path: '/api/activation-status',
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token1}` },
+    });
+    assert(aliasAct1.status === 200, 'GET /api/activation-status alias returns 200 OK');
+
+    const aliasAct2 = await makeRequest(server, {
+      path: '/api/activation/status',
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token1}` },
+    });
+    assert(aliasAct2.status === 200, 'GET /api/activation/status alias returns 200 OK');
+
     // Cleanup
     await User.deleteMany({ email: /^test-profile-route.*@analyticsavenue\.test$/ });
     await DeviceActivation.deleteMany({ email: /^test-profile-route.*@analyticsavenue\.test$/ });
 
     console.log('\n================================================================');
-    console.log('   ALL ROUTE AND CONTROLLER CHECKS PASSED SUCCESSFULLY (17/17)');
+    console.log('   ALL ROUTE AND CONTROLLER CHECKS PASSED SUCCESSFULLY (24/24)');
     console.log('================================================================\n');
   } finally {
     server.close();
