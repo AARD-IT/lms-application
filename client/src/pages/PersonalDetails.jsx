@@ -198,10 +198,18 @@ export default function PersonalDetails() {
               </div>
               <div className="space-y-1">
                 <h2 className="text-xl font-bold text-slate-900">
-                  Personal Details Submitted Successfully!
+                  {activationData?.isActivated
+                    ? 'Course Package Activated!'
+                    : activationData?.status === 'pin_generated'
+                    ? 'Activation PIN Ready!'
+                    : 'Personal Details Submitted Successfully!'}
                 </h2>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Your onboarding information is saved. Your payment verification request is currently active in the Admin Dashboard.
+                  {activationData?.isActivated
+                    ? 'Your device is authenticated and your course package is unlocked. You can start learning immediately.'
+                    : activationData?.status === 'pin_generated'
+                    ? 'Your payment has been verified and a 4-digit activation PIN was delivered to your LMS Notifications.'
+                    : 'Your onboarding information is saved. Your payment verification request is currently active in the Admin Dashboard.'}
                 </p>
               </div>
             </div>
@@ -219,10 +227,16 @@ export default function PersonalDetails() {
                 <span className="text-slate-500 font-medium">Contact Phone</span>
                 <span className="font-semibold text-slate-900">{student?.phone || form.phone}</span>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <span className="text-slate-500 font-medium">Education Background</span>
                 <span className="font-semibold text-slate-900">{student?.education || form.education}</span>
               </div>
+              {activationData?.packageName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Assigned Package</span>
+                  <span className="font-semibold text-primary-700">{activationData.packageName}</span>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-primary-200 bg-primary-50/50 p-4 space-y-2">
@@ -231,7 +245,11 @@ export default function PersonalDetails() {
                 <span>What happens next?</span>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Once the Administrator verifies your payment and assigns your course package (Core Skills, Advanced Skills, or Full LMS), you will receive an LMS notification containing your <strong>individual 4-digit activation PIN</strong>.
+                {activationData?.isActivated
+                  ? 'Your courses and course-specific learning resources are unlocked. Click "Go to My Courses" below to access your curriculum.'
+                  : activationData?.status === 'pin_generated'
+                  ? 'Your 4-digit activation PIN is available in your LMS Notifications. Click "Check LMS Notifications" or "Enter Activation PIN" to complete your activation.'
+                  : 'Once the Administrator verifies your payment and assigns your course package (Core Skills, Advanced Skills, or Full LMS), you will receive an LMS notification containing your individual 4-digit activation PIN.'}
               </p>
             </div>
 

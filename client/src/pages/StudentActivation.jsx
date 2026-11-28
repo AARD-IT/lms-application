@@ -5,7 +5,7 @@ import AuthLayout from '../components/layout/AuthLayout.jsx';
 import Button from '../components/common/Button.jsx';
 import Input from '../components/common/Input.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { getOrCreateDeviceId, toErrorMessage } from '../api/client.js';
+import { getActivationStatus, getOrCreateDeviceId, toErrorMessage } from '../api/client.js';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -16,27 +16,48 @@ const points = [
 ];
 
 export default function StudentActivation() {
-  const { activateWithPin, isAuthenticated } = useAuth();
+  const { activateWithPin, isAuthenticated, student } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const [email, setEmail] = useState(() => searchParams.get('email') || '');
+  const [email, setEmail] = useState(() => searchParams.get('email') || student?.email || '');
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [emailError, setEmailError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [errorDetails, setErrorDetails] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [activatedSuccess, setActivatedSuccess] = useState(null);
+  const [existingActivation, setExistingActivation] = useState(null);
 
   const digitRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
 
+  // Update email if signed-in student loads
+  useEffect(() => {
+    if (student?.email && !email) {
+      setEmail(student.email);
+    }
+  }, [student, email]);
+
+  // If authenticated, check if already activated to avoid repeated PIN entry
+  useEffect(() => {
+    if (isAuthenticated) {
+      getActivationStatus()
+        .then((status) => {
+          if (status?.isActivated) {
+            setExistingActivation(status);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated]);
+
   // Auto-focus the first digit input on mount, or email if empty
   useEffect(() => {
-    if (!searchParams.get('email')) {
+    if (!searchParams.get('email') && !student?.email) {
       // Focus email or first digit
     }
     digitRefs[0]?.current?.focus();
-  }, [searchParams]);
+  }, [searchParams, student]);
 
   const handleDigitChange = (index, value) => {
     // Keep only the last character if multiple are entered
@@ -141,6 +162,60 @@ export default function StudentActivation() {
       setSubmitting(false);
     }
   };
+
+  // If already activated, show already active status and navigate to courses
+  if (existingActivation) {
+    return (
+      <AuthLayout
+        title="Package Already Activated"
+        subtitle="Your account is already active with authorized course package access."
+        points={points}
+      >
+        <div className="space-y-6 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 shadow-inner">
+            <CheckCircle2 className="h-10 w-10" />
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight text-surface-900">
+              Your Package is Active
+            </h2>
+            <p className="mt-2 text-sm text-surface-600">
+              {existingActivation.packageName ? `Package: "${existingActivation.packageName}". ` : ''}
+              You do not need to enter an activation PIN again.
+            </p>
+          </div>
+
+          {existingActivation.authorizedCourses?.length > 0 && (
+            <div className="rounded-xl border border-surface-200 bg-surface-50 p-4 text-left">
+              <span className="block text-xs font-semibold uppercase tracking-wider text-surface-500">
+                Unlocked Courses ({existingActivation.authorizedCourses.length})
+              </span>
+              <ul className="mt-3 space-y-2">
+                {existingActivation.authorizedCourses.map((course) => (
+                  <li key={course._id || course.id} className="flex items-center gap-2.5 text-sm font-medium text-surface-900">
+                    <span className="h-2 w-2 rounded-full bg-primary-600" />
+                    <span>{course.title || 'Course'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <Button
+            type="button"
+            variant="primary"
+            size="lg"
+            className="w-full flex items-center justify-center gap-2"
+            onClick={() => navigate('/my-courses', { replace: true })}
+          >
+            <span>Go to My Courses</span>
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </AuthLayout>
+    );
+  }
 
   // If activation is complete, show the celebration state
   if (activatedSuccess) {
@@ -257,7 +332,8 @@ export default function StudentActivation() {
             }}
             error={emailError}
             icon={Mail}
-            disabled={submitting}
+            disabled={submitting || Boolean(student?.email)}
+            hint={student?.email ? `Signed in as ${student.email}` : undefined}
           />
         </div>
 

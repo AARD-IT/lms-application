@@ -10,12 +10,16 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const { connectDB } = require('../config/db');
 const User = require('../models/User');
-const { ADMIN_EMAIL } = require('../middleware/authMiddleware');
 
-const ADMIN_PASSWORD = 'venue123';
-const ADMIN_NAME = 'Admin';
+const ADMIN_EMAIL = process.argv[2] || process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.argv[3] || process.env.ADMIN_PASSWORD;
+const ADMIN_NAME = process.argv[4] || process.env.ADMIN_NAME || 'Administrator';
 
 async function setAdminAccount() {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    console.error('[set:admin] Please provide credentials: node setAdminAccount.js <email> <password> [name] or set ADMIN_EMAIL & ADMIN_PASSWORD env vars.');
+    process.exit(1);
+  }
   await connectDB();
 
   let user = await User.findOne({ email: ADMIN_EMAIL });

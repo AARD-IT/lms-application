@@ -11,9 +11,14 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const { connectDB } = require('../config/db');
 const User = require('../models/User');
-const { ADMIN_EMAIL } = require('../middleware/authMiddleware');
+
+const ADMIN_EMAIL = process.argv[2] || process.env.ADMIN_EMAIL;
 
 async function promote() {
+  if (!ADMIN_EMAIL) {
+    console.error('[promote:admin] Please provide an admin email: node promoteAdmin.js <email> or set ADMIN_EMAIL env var.');
+    process.exit(1);
+  }
   await connectDB();
 
   const user = await User.findOne({ email: ADMIN_EMAIL });

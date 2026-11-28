@@ -2,7 +2,6 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret-key-change-in-prod';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'analyticsavenue@gmail.com';
 
 /**
  * Why a user who presented a valid token is still refused, or null if they
@@ -159,5 +158,4 @@ module.exports = {
   requireAdmin,
   requireSuperAdmin,
   rejectionFor,
-  ADMIN_EMAIL,
 };
