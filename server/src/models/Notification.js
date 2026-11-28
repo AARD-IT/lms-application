@@ -23,6 +23,8 @@ const notificationSchema = new mongoose.Schema(
         'event',
         // Enrolment and payment status changes.
         'payment',
+        // Activation PIN issued for course package.
+        'activation_pin',
         // --- admin-facing ---
         'learner_registered',
         'enrollment',

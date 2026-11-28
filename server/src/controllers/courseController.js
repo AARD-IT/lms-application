@@ -2,49 +2,54 @@ const Course = require('../models/Course');
 const Lesson = require('../models/Lesson');
 const Progress = require('../models/Progress');
 const CourseAccess = require('../models/CourseAccess');
+const DeviceActivation = require('../models/DeviceActivation');
 const Enrollment = require('../models/Enrollment');
 const ResourceAccess = require('../models/ResourceAccess');
 const Review = require('../models/Review');
 const { isGrantLive } = require('../services/enrolmentService');
+const { COURSE_ACCESS_STATUS, ACTIVATION_STATUS, PAYMENT_STATUS, USER_ROLES } = require('../constants');
 
 /**
- * Attach lesson counts, this student's completion percentage, and whether
- * they currently have access, to each course. Computed here so the
+ * Attach lesson counts, this student's completion percentage, dynamic access status,
+ * and whether they currently have access, to each course. Computed here so the
  * dashboard needs one request instead of N.
  *
  * `student` is undefined for anonymous catalogue browsing (the course list
- * is public) — such requests get lesson counts but no progress and no access.
+ * is public) — such requests get lesson counts but no progress and no access (LOCKED).
  *
- * `accessVia` says how a learner got in: 'staff', 'full' (Full Access) or
- * 'grant' (admin-granted, paid or free). `hasSelectedMaterials` marks a
- * course the learner cannot open but has been given some study materials from.
- *
- * Once a course has learner reviews, its rating is their real average; until
- * then the admin-entered catalogue rating (if any) is shown.
+ * Dynamic accessStatus:
+ *   - 'ACCESS_GRANTED': payment verified + authorized + device activated (or staff/fullAccess)
+ *   - 'ACTIVATION_PENDING': payment verified + authorized, but PIN device activation pending
+ *   - 'PAYMENT_PENDING': payment under review / pending admin manual verification
+ *   - 'LOCKED': not purchased / not authorized
+ *   - 'SUSPENDED': account or course access suspended
  */
 async function decorateCourses(courses, student) {
   const courseIds = courses.map((c) => c._id);
-  const isAdmin = student?.role === 'admin';
+  const isAdmin = student?.role === USER_ROLES.ADMIN;
   const hasFullAccess = Boolean(student?.fullAccess);
+  const studentId = student?._id || student?.id;
 
-  const [lessonCounts, progressRows, accessRows, materialRows, reviewStats] = await Promise.all([
+  const [lessonCounts, progressRows, accessRows, materialRows, reviewStats, activation, enrollments] = await Promise.all([
     Lesson.aggregate([
       { $match: { courseId: { $in: courseIds } } },
       { $group: { _id: '$courseId', count: { $sum: 1 } } },
     ]),
-    student ? Progress.find({ studentId: student.id, courseId: { $in: courseIds } }).lean() : [],
-    student
-      ? CourseAccess.find({ studentId: student.id, courseId: { $in: courseIds } }).lean()
+    studentId ? Progress.find({ studentId, courseId: { $in: courseIds } }).lean() : [],
+    studentId
+      ? CourseAccess.find({ studentId, courseId: { $in: courseIds } }).lean()
       : [],
-    student && !isAdmin ? ResourceAccess.distinct('courseId', { studentId: student.id, courseId: { $in: courseIds } }) : [],
+    studentId && !isAdmin ? ResourceAccess.distinct('courseId', { studentId, courseId: { $in: courseIds } }) : [],
     Review.aggregate([
       { $match: { courseId: { $in: courseIds }, hidden: false } },
       { $group: { _id: '$courseId', average: { $avg: '$rating' }, count: { $sum: 1 } } },
     ]),
+    studentId ? DeviceActivation.findOne({ studentId }).lean() : null,
+    studentId ? Enrollment.find({ studentId, courseId: { $in: courseIds } }).lean() : [],
   ]);
+
   const reviewsByCourse = new Map(reviewStats.map((r) => [String(r._id), r]));
   const materialCourses = new Set(materialRows.map(String));
-
   const countByCourse = new Map(lessonCounts.map((r) => [String(r._id), r.count]));
   const completedByCourse = new Map();
   for (const row of progressRows) {
@@ -53,40 +58,91 @@ async function decorateCourses(courses, student) {
     completedByCourse.set(key, (completedByCourse.get(key) || 0) + 1);
   }
   const accessByCourse = new Map(accessRows.map((r) => [String(r.courseId), r]));
+  const enrollmentByCourse = new Map(enrollments.map((e) => [String(e.courseId), e]));
+
+  const authorizedCourseSet = new Set((activation?.authorizedCourses || []).map((id) => String(id)));
+  const isActivationActivated = Boolean(
+    activation?.isActivated && activation?.status === ACTIVATION_STATUS.ACTIVATED
+  );
+  const isActivationRevoked = Boolean(activation?.status === ACTIVATION_STATUS.REVOKED);
+  const isPaymentVerified = Boolean(activation?.paymentStatus === PAYMENT_STATUS.VERIFIED);
 
   return courses.map((course) => {
     const key = String(course._id);
     const lessonCount = countByCourse.get(key) || 0;
     const completed = completedByCourse.get(key) || 0;
     const grant = accessByCourse.get(key);
-    const isSuspended = Boolean(grant?.suspended);
-    const suspensionReason = isSuspended ? (grant.suspensionReason || '') : '';
-    const suspendedAt = isSuspended ? (grant.suspendedAt || null) : null;
+    const enrollment = enrollmentByCourse.get(key);
+    const isSuspended = Boolean(grant?.suspended) || isActivationRevoked;
+    const suspensionReason = isSuspended
+      ? (grant?.suspensionReason || activation?.revocationReason || '')
+      : '';
+    const suspendedAt = isSuspended ? (grant?.suspendedAt || null) : null;
 
+    let accessStatus = COURSE_ACCESS_STATUS.LOCKED;
     let accessVia = null;
+
     if (isSuspended) {
+      accessStatus = COURSE_ACCESS_STATUS.SUSPENDED;
       accessVia = null;
     } else if (isAdmin) {
+      accessStatus = COURSE_ACCESS_STATUS.ACCESS_GRANTED;
       accessVia = 'staff';
     } else if (hasFullAccess) {
+      accessStatus = COURSE_ACCESS_STATUS.ACCESS_GRANTED;
       accessVia = 'full';
+    } else if (activation) {
+      const isCourseAuthorized = authorizedCourseSet.has(key) || (grant && isGrantLive(grant));
+      if (isCourseAuthorized) {
+        if (isActivationActivated) {
+          accessStatus = COURSE_ACCESS_STATUS.ACCESS_GRANTED;
+          accessVia = 'grant';
+        } else if (isPaymentVerified || (grant && isGrantLive(grant))) {
+          accessStatus = COURSE_ACCESS_STATUS.ACTIVATION_PENDING;
+          accessVia = null;
+        } else {
+          accessStatus = COURSE_ACCESS_STATUS.PAYMENT_PENDING;
+          accessVia = null;
+        }
+      } else if (enrollment?.status === PAYMENT_STATUS.PENDING || activation.paymentStatus === PAYMENT_STATUS.PENDING) {
+        accessStatus = COURSE_ACCESS_STATUS.PAYMENT_PENDING;
+        accessVia = null;
+      } else {
+        accessStatus = COURSE_ACCESS_STATUS.LOCKED;
+        accessVia = null;
+      }
     } else if (grant && isGrantLive(grant)) {
+      accessStatus = COURSE_ACCESS_STATUS.ACCESS_GRANTED;
       accessVia = 'grant';
+    } else if (enrollment?.status === PAYMENT_STATUS.PENDING) {
+      accessStatus = COURSE_ACCESS_STATUS.PAYMENT_PENDING;
+      accessVia = null;
+    } else {
+      accessStatus = COURSE_ACCESS_STATUS.LOCKED;
+      accessVia = null;
     }
 
+    const hasAccess = accessStatus === COURSE_ACCESS_STATUS.ACCESS_GRANTED;
     const reviews = reviewsByCourse.get(key);
+
     return {
       ...course.toJSON(),
       ...(reviews ? { rating: Math.round(reviews.average * 10) / 10, ratingCount: reviews.count } : {}),
       lessonCount,
       completedLessons: completed,
       progress: lessonCount ? Math.round((completed / lessonCount) * 100) : 0,
-      hasAccess: Boolean(accessVia),
+      hasAccess,
+      accessStatus,
       accessVia,
       isSuspended,
       suspensionReason,
       suspendedAt,
-      hasSelectedMaterials: !accessVia && materialCourses.has(key),
+      hasSelectedMaterials: !hasAccess && materialCourses.has(key),
+      isActivated: activation ? Boolean(activation.isActivated) : false,
+      deviceActivationStatus: activation ? activation.status : null,
+      paymentStatus: activation?.paymentStatus || enrollment?.status || null,
+      enrollmentStatus: enrollment?.status || null,
+      enrollmentGateway: enrollment?.gateway || null,
     };
   });
 }

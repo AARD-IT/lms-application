@@ -6,31 +6,38 @@ const { courseAccessFor, grantedCourseIds } = require('../services/enrolmentServ
 
 /**
  * Study materials (PDFs, slides, documents, links).
- *
- * A learner sees all of a course's materials when they can open the course
- * (Full Access or a course grant), or just the individual materials an admin
- * shared with them (Limited Access → selected materials).
+ * Strictly course-specific: students ONLY see and access resources belonging
+ * to the courses for which they have valid course access (verified Razorpay payment,
+ * manual Admin course authorization, or Full Access).
  */
 
-/** GET /api/courses/:courseId/resources */
+/** GET /api/courses/:courseId/resources — strictly course-authorized. */
 async function listResourcesForCourse(req, res, next) {
   try {
     const { courseId } = req.params;
-    if (!mongoose.isValidObjectId(courseId)) return res.status(404).json({ error: 'Course not found' });
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
 
     const access = await courseAccessFor(req.user, courseId);
-    if (access.allowed) {
-      const resources = await Resource.find({ courseId }).sort({ createdAt: 1 });
-      return res.json(resources);
-    }
-
-    const shared = await ResourceAccess.find({ studentId: req.user._id, courseId }).select('resourceId');
-    if (!shared.length) {
+    if (!access.allowed) {
       return res.status(403).json({
-        error: access.reason === 'expired' ? 'Your access to this course has expired' : 'You do not have access to this course',
+        error:
+          access.reason === 'expired'
+            ? 'Your access to this course has expired'
+            : access.reason === 'suspended'
+            ? 'Your access to this course is suspended'
+            : 'You do not have access to this course resources',
+        code: 'COURSE_ACCESS_REQUIRED',
       });
     }
-    const resources = await Resource.find({ _id: { $in: shared.map((s) => s.resourceId) } }).sort({ createdAt: 1 });
+
+    const resources = await Resource.find({ courseId }).sort({ createdAt: 1 });
     res.json(resources);
   } catch (err) {
     next(err);
@@ -38,30 +45,86 @@ async function listResourcesForCourse(req, res, next) {
 }
 
 /**
- * GET /api/resources/mine — every material this learner can open, grouped by
- * course: [{ course, access: 'full' | 'course' | 'selected', resources }].
+ * GET /api/resources/:id
+ * Direct resource access authorization: verifies student has valid course access
+ * for this specific resource before returning details. Prevents ID manipulation bypass.
+ */
+async function getResourceById(req, res, next) {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(404).json({ error: 'Resource not found' });
+    }
+
+    const resource = await Resource.findById(id).populate('courseId', 'title slug published');
+    if (!resource) {
+      return res.status(404).json({ error: 'Resource not found' });
+    }
+
+    const courseId = resource.courseId?._id || resource.courseId;
+    const access = await courseAccessFor(req.user, courseId);
+    if (!access.allowed) {
+      return res.status(403).json({
+        error: 'You do not have access to this course resource.',
+        code: 'COURSE_ACCESS_REQUIRED',
+      });
+    }
+
+    res.json(resource);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/resources/mine — every material this learner can open, grouped by course.
+ * Strictly course-specific: students only see resources from their authorized courses.
  */
 async function listMine(req, res, next) {
   try {
     const user = req.user;
-    const everything = user.role === 'admin' || user.fullAccess;
+    const isStaff = user.role === 'admin';
+    const hasFullAccess = Boolean(user.fullAccess);
 
-    const [courseIds, shared] = await Promise.all([
-      everything ? null : grantedCourseIds(user._id),
-      everything ? [] : ResourceAccess.find({ studentId: user._id }).select('resourceId courseId'),
-    ]);
+    let authorizedCourseIds = [];
 
-    const courseFilter = everything
-      ? { published: { $ne: false } }
-      : { _id: { $in: [...courseIds, ...shared.map((s) => s.courseId)] } };
-    if (user.role === 'admin') delete courseFilter.published;
+    if (isStaff) {
+      // Staff can view all courses
+      const allCourses = await Course.find().select('_id');
+      authorizedCourseIds = allCourses.map((c) => c._id);
+    } else if (hasFullAccess) {
+      // Full Access covers all published courses
+      const allPublished = await Course.find({ published: { $ne: false } }).select('_id');
+      authorizedCourseIds = allPublished.map((c) => c._id);
+    } else {
+      // Student: dynamically fetch verified authorized course IDs from database
+      const grantedIds = await grantedCourseIds(user._id);
 
-    const courses = await Course.find(courseFilter).select('title thumbnail accent category').sort({ createdAt: 1 });
-    const fullCourseIds = new Set(everything ? courses.map((c) => String(c._id)) : courseIds.map(String));
-    const sharedIds = shared.map((s) => s.resourceId);
+      // Validate each course grant with courseAccessFor to ensure no suspended/expired courses leak
+      const accessChecks = await Promise.all(
+        grantedIds.map(async (cId) => {
+          const access = await courseAccessFor(user, cId);
+          return access.allowed ? cId : null;
+        })
+      );
+      authorizedCourseIds = accessChecks.filter(Boolean);
+    }
 
+    if (!authorizedCourseIds.length) {
+      return res.json([]);
+    }
+
+    // Fetch only authorized courses
+    const courseFilter = { _id: { $in: authorizedCourseIds } };
+    if (!isStaff) courseFilter.published = { $ne: false };
+
+    const courses = await Course.find(courseFilter)
+      .select('title thumbnail accent category')
+      .sort({ createdAt: 1 });
+
+    // Fetch ONLY resources belonging to authorized courses
     const resources = await Resource.find({
-      $or: [{ courseId: { $in: [...fullCourseIds] } }, { _id: { $in: sharedIds } }],
+      courseId: { $in: courses.map((c) => c._id) },
     }).sort({ createdAt: 1 });
 
     const byCourse = new Map();
@@ -71,16 +134,26 @@ async function listMine(req, res, next) {
       byCourse.get(key).push(resource);
     }
 
-    res.json(
-      courses.map((course) => {
+    // Group resources by course; include courses that have study materials
+    const groups = courses
+      .map((course) => {
         const key = String(course._id);
+        const courseResources = byCourse.get(key) || [];
         return {
-          course: { _id: course._id, title: course.title, thumbnail: course.thumbnail, accent: course.accent, category: course.category },
-          access: fullCourseIds.has(key) ? (everything ? 'full' : 'course') : 'selected',
-          resources: byCourse.get(key) || [],
+          course: {
+            _id: course._id,
+            title: course.title,
+            thumbnail: course.thumbnail,
+            accent: course.accent,
+            category: course.category,
+          },
+          access: isStaff || hasFullAccess ? 'full' : 'course',
+          resources: courseResources,
         };
       })
-    );
+      .filter((group) => group.resources.length > 0);
+
+    res.json(groups);
   } catch (err) {
     next(err);
   }
@@ -102,4 +175,4 @@ async function listAll(_req, res, next) {
   }
 }
 
-module.exports = { listResourcesForCourse, listMine, listAll };
+module.exports = { listResourcesForCourse, getResourceById, listMine, listAll };

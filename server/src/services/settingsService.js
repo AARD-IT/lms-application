@@ -141,7 +141,46 @@ const DEFAULTS = {
     // one is completed. Staff can always open every lesson.
     sequentialLessons: true,
   },
+  activation: {
+    systemEnabled: true,
+    defaultPinHash: '',
+    defaultPinSalt: '',
+    pinLength: 4,
+    defaultExpiryHours: 24,
+    maxFailedAttempts: 5,
+    lockoutDurationMinutes: 15,
+  },
 };
+
+const DEFAULT_SYSTEM_PIN = '1234';
+
+function hashPin(pin, salt) {
+  return crypto.createHmac('sha256', salt).update(String(pin).trim()).digest('hex');
+}
+
+function verifyPin(candidatePin, salt, storedHash) {
+  if (!candidatePin || !salt || !storedHash) return false;
+  const candidateHash = hashPin(candidatePin, salt);
+  const bufA = Buffer.from(candidateHash, 'hex');
+  const bufB = Buffer.from(storedHash, 'hex');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function ensureDefaultPin(settings) {
+  if (!settings.activation) {
+    settings.activation = { ...DEFAULTS.activation };
+  }
+  if (!settings.activation.defaultPinHash || !settings.activation.defaultPinSalt) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    settings.activation.defaultPinSalt = salt;
+    settings.activation.defaultPinHash = hashPin(DEFAULT_SYSTEM_PIN, salt);
+  }
+  if (settings.activation.systemEnabled === undefined) {
+    settings.activation.systemEnabled = true;
+  }
+  return settings;
+}
 
 /** Fields never sent to the browser in clear; the admin sees `hasX` flags instead. */
 const SECRET_FIELDS = {
@@ -149,6 +188,7 @@ const SECRET_FIELDS = {
   email: ['smtpPass', 'resendApiKey'],
   // The admin gets it inside the ready-to-paste Apps Script instead.
   integrations: ['googleSheetSecret'],
+  activation: ['defaultPinHash', 'defaultPinSalt'],
 };
 
 let cache = null;
@@ -242,7 +282,7 @@ function validateLinks(clean) {
 async function get() {
   if (cache) return cache;
   const doc = await Setting.findOne({ key: KEY }).lean();
-  cache = merge(DEFAULTS, doc?.data);
+  cache = ensureDefaultPin(merge(DEFAULTS, doc?.data));
   return cache;
 }
 
@@ -253,6 +293,23 @@ async function get() {
  */
 async function update(patch, userId) {
   const current = await get();
+
+  // Handle default PIN update before sanitizePatch
+  if (patch.activation) {
+    if (patch.activation.defaultPin !== undefined && patch.activation.defaultPin !== '') {
+      const rawPin = String(patch.activation.defaultPin).trim();
+      if (!/^\d{4}$/.test(rawPin)) {
+        throw badRequest('Default activation PIN must be exactly 4 digits (0000 - 9999).');
+      }
+      const salt = crypto.randomBytes(16).toString('hex');
+      patch.activation.defaultPinHash = hashPin(rawPin, salt);
+      patch.activation.defaultPinSalt = salt;
+      delete patch.activation.defaultPin;
+    } else if (patch.activation.defaultPin === '') {
+      delete patch.activation.defaultPin;
+    }
+  }
+
   const clean = sanitizePatch(DEFAULTS, patch);
 
   for (const [section, fields] of Object.entries(SECRET_FIELDS)) {
@@ -262,7 +319,7 @@ async function update(patch, userId) {
   }
   validateLinks(clean);
 
-  const next = merge(DEFAULTS, merge(current, clean));
+  const next = ensureDefaultPin(merge(DEFAULTS, merge(current, clean)));
   next.learning = clampLearning(next.learning);
   if (!['manual', 'razorpay'].includes(next.payments.gateway)) next.payments.gateway = 'manual';
   if (!['', 'resend', 'smtp'].includes(next.email.provider)) next.email.provider = '';
@@ -301,6 +358,10 @@ function forAdmin(settings) {
       copy[section][field] = '';
     }
   }
+  if (copy.activation) {
+    copy.activation.hasDefaultPin = Boolean(settings.activation?.defaultPinHash);
+    copy.activation.systemEnabled = settings.activation?.systemEnabled !== false;
+  }
   return copy;
 }
 
@@ -336,4 +397,42 @@ async function isNotificationEnabled(audience, key) {
   return settings.notifications?.[audience]?.[key] !== false;
 }
 
-module.exports = { get, update, forAdmin, forPublic, isNotificationEnabled, ensureSheetSecret, DEFAULTS };
+/**
+ * Validates a candidate 4-digit PIN against the centralized platform settings.
+ * Returns { valid: true } or { valid: false, code, error }
+ */
+async function verifyDefaultPin(candidatePin) {
+  const current = await get();
+  if (current.activation?.systemEnabled === false) {
+    return {
+      valid: false,
+      code: 'SYSTEM_DISABLED',
+      error: 'Device activation system is currently disabled by administrator. Please contact support.',
+    };
+  }
+  if (!current.activation?.defaultPinHash || !current.activation?.defaultPinSalt) {
+    return {
+      valid: false,
+      code: 'NO_DEFAULT_PIN',
+      error: 'No default activation PIN is configured on the platform.',
+    };
+  }
+  const isMatch = verifyPin(candidatePin, current.activation.defaultPinSalt, current.activation.defaultPinHash);
+  if (isMatch) {
+    return { valid: true };
+  }
+  return { valid: false, code: 'INVALID_PIN', error: 'Invalid activation PIN' };
+}
+
+module.exports = {
+  get,
+  update,
+  forAdmin,
+  forPublic,
+  isNotificationEnabled,
+  ensureSheetSecret,
+  verifyDefaultPin,
+  hashPin,
+  verifyPin,
+  DEFAULTS,
+};

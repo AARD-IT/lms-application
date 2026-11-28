@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret-key-change-in-prod';
-const ADMIN_EMAIL = 'analyticsavenue@gmail.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'analyticsavenue@gmail.com';
 
 /**
  * Why a user who presented a valid token is still refused, or null if they
@@ -11,6 +11,12 @@ const ADMIN_EMAIL = 'analyticsavenue@gmail.com';
  * the account was signed into on another device (single-device login).
  */
 function rejectionFor(user, decoded) {
+  if (user.status === 'deleted') {
+    return {
+      error: 'Account no longer exists.',
+      code: 'ACCOUNT_DELETED',
+    };
+  }
   if (user.status === 'suspended') {
     return {
       error: 'Your account is suspended. Please contact support.',
@@ -72,6 +78,7 @@ async function requireAuth(req, res, next) {
 
     req.user = user;
     req.sessionId = decoded.sessionId;
+    req.deviceActivationId = decoded.deviceActivationId || req.headers['x-device-id'] || null;
     
     // Also attach to req.student for backwards compatibility with existing mock auth endpoints
     req.student = user;

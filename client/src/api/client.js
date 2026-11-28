@@ -42,8 +42,34 @@ const OFFLINE_WAIT_MS = 30000;
 
 const isRead = (config) => ['get', 'head'].includes(String(config?.method || 'get').toLowerCase());
 
+/**
+ * Unique, persistent identifier for this browser/device (System A).
+ * Used for 1-time PIN first device activation and hardware session locking.
+ */
+export function getOrCreateDeviceId() {
+  try {
+    let id = localStorage.getItem('lms.device_id');
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : 'dev-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      localStorage.setItem('lms.device_id', id);
+    }
+    return id;
+  } catch {
+    return 'dev-browser-temp';
+  }
+}
+
 api.interceptors.request.use((config) => {
   if (isRead(config) && !config.timeout) config.timeout = READ_TIMEOUT_MS;
+  try {
+    const deviceId = getOrCreateDeviceId();
+    if (deviceId && config.headers && !config.headers['x-device-id']) {
+      config.headers['x-device-id'] = deviceId;
+    }
+  } catch {}
   return config;
 });
 
@@ -72,9 +98,8 @@ function waitBeforeRetry(attempt) {
 }
 
 /**
- * If a session token is present it is sent on every request. The current
- * backend uses mock auth and ignores it; a real backend can start verifying
- * this header without any frontend change.
+ * If a session token is present it is sent on every request in the Authorization header.
+ * Verified by the backend JWT authentication middleware on protected endpoints.
  */
 export function setAuthToken(token) {
   if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
@@ -140,9 +165,7 @@ export const getMe = () => api.get('/me').then((r) => r.data);
 export const getHealth = () => api.get('/health').then((r) => r.data);
 
 // --- auth -----------------------------------------------------------------
-// Integration points for a real auth backend. Until /api/auth/* exists these
-// reject with a 404 and AuthContext falls back to the demo session — see
-// context/AuthContext.jsx.
+// Database-backed auth endpoints providing JWT sessions and single-device activation.
 export const login = (credentials) => api.post('/auth/login', credentials).then((r) => r.data);
 export const register = (payload) => api.post('/auth/register', payload).then((r) => r.data);
 export const logout = () => api.post('/auth/logout').then((r) => r.data);
@@ -164,16 +187,22 @@ export const getCourses = () =>
     return r.data;
   });
 export const getCourse = (courseId) => api.get(`/courses/${courseId}`).then((r) => r.data);
+export const getCourseCurriculum = (courseId) =>
+  api.get(`/courses/${courseId}/curriculum`).then((r) => r.data);
 export const getCourseLessons = (courseId) =>
   api.get(`/courses/${courseId}/lessons`).then((r) => r.data);
 export const getLesson = (lessonId) => api.get(`/lessons/${lessonId}`).then((r) => r.data);
 export const getCourseResources = (courseId) =>
   api.get(`/courses/${courseId}/resources`).then((r) => r.data);
+export const getResourceById = (resourceId) =>
+  api.get(`/resources/${resourceId}`).then((r) => r.data);
 
 // --- admin ----------------------------------------------------------------
 export const createCourse = (payload) => api.post('/admin/courses', payload).then((r) => r.data);
 export const updateCourse = (courseId, payload) => api.put(`/admin/courses/${courseId}`, payload).then((r) => r.data);
 export const deleteCourse = (courseId) => api.delete(`/admin/courses/${courseId}`).then((r) => r.data);
+export const getAdminCourseLessons = (courseId) => api.get(`/admin/courses/${courseId}/lessons`).then((r) => r.data);
+export const reorderLessons = (courseId, payload) => api.put(`/admin/courses/${courseId}/lessons/reorder`, payload).then((r) => r.data);
 export const addLesson = (payload) => api.post('/admin/lessons', payload).then((r) => r.data);
 export const updateLesson = (lessonId, payload) => api.put(`/admin/lessons/${lessonId}`, payload).then((r) => r.data);
 export const deleteLesson = (lessonId) => api.delete(`/admin/lessons/${lessonId}`).then((r) => r.data);
@@ -206,6 +235,7 @@ export const getLearners = (params) => api.get('/admin/learners', { params }).th
 export const getLearner = (id) => api.get(`/admin/learners/${id}`).then((r) => r.data);
 export const setLearnerStatus = (id, status, reason) =>
   api.patch(`/admin/learners/${id}/status`, { status, reason }).then((r) => r.data);
+export const deleteLearner = (id) => api.delete(`/admin/learners/${id}`).then((r) => r.data);
 export const enrolLearner = (id, courseId) =>
   api.post(`/admin/learners/${id}/enrol`, { courseId }).then((r) => r.data);
 export const unenrolLearner = (id, courseId) =>
@@ -454,6 +484,45 @@ export const getAdminTickets = (params) => api.get('/admin/tickets', { params })
 export const getAdminTicketStats = () => api.get('/admin/tickets/stats').then((r) => r.data);
 export const updateTicketStatus = (id, payload) => api.patch(`/admin/tickets/${id}/status`, payload).then((r) => r.data);
 export const adminReplyToTicket = (id, payload) => api.post(`/admin/tickets/${id}/reply`, payload).then((r) => r.data);
+
+// --- onboarding & personal details ---
+export const completeProfile = (payload) =>
+  api.put('/auth/complete-profile', payload).then((r) => r.data);
+
+// --- 3-tier course packages ---
+export const getPackages = () => api.get('/packages').then((r) => r.data);
+export const getPackage = (id) => api.get(`/packages/${id}`).then((r) => r.data);
+export const getAdminPackages = () => api.get('/admin/activation/packages').then((r) => r.data);
+export const updatePackageCourses = (id, payload) =>
+  api.put(`/admin/activation/packages/${id}/courses`, payload).then((r) => r.data);
+export const generatePackagePin = (payload) =>
+  api.post('/admin/activation/generate-package-pin', payload).then((r) => r.data);
+export const regeneratePackagePin = (payload) =>
+  api.post('/admin/activation/regenerate-package-pin', payload).then((r) => r.data);
+
+// --- device activation & PIN system (student) ---
+export const activateDevice = (payload) =>
+  api.post('/auth/activate', payload).then((r) => r.data);
+export const getActivationStatus = () =>
+  api.get('/auth/activation-status').then((r) => r.data);
+
+// --- device activation & PIN management (admin) ---
+export const getStudentActivation = (studentId) =>
+  api.get(`/admin/activation/student/${studentId}`).then((r) => r.data);
+export const listActivations = (params) =>
+  api.get('/admin/activation/list', { params }).then((r) => r.data);
+export const verifyActivationPayment = (payload) =>
+  api.post('/admin/activation/verify-payment', payload).then((r) => r.data);
+export const authorizeActivationCourses = (payload) =>
+  api.post('/admin/activation/authorize-courses', payload).then((r) => r.data);
+export const generateActivationPin = (payload) =>
+  api.post('/admin/activation/generate-pin', payload).then((r) => r.data);
+export const resetActivation = (payload) =>
+  api.post('/admin/activation/reset', payload).then((r) => r.data);
+export const revokeActivation = (payload) =>
+  api.post('/admin/activation/revoke', payload).then((r) => r.data);
+export const reauthorizeActivation = (payload) =>
+  api.post('/admin/activation/reauthorize', payload).then((r) => r.data);
 
 /** Normalises an axios failure into a message we can show a student. */
 export function toErrorMessage(err, fallback = 'Something went wrong. Please try again.') {

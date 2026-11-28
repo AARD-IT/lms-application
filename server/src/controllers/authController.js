@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const DeviceActivation = require('../models/DeviceActivation');
 const activity = require('../services/activityService');
 const mailService = require('../services/mailService');
 const settingsService = require('../services/settingsService');
@@ -57,6 +58,22 @@ async function register(req, res, next) {
       currentSessionId: sessionId,
     });
     await user.save();
+
+    // Initialize DeviceActivation record for the new student
+    await DeviceActivation.findOneAndUpdate(
+      { studentId: user._id },
+      {
+        $setOnInsert: {
+          studentId: user._id,
+          email: user.email,
+          paymentStatus: 'pending',
+          status: 'payment_pending',
+          isActivated: false,
+          authorizedCourses: [],
+        },
+      },
+      { upsert: true, new: true }
+    );
 
     await notifyAdmins(
       {
@@ -121,8 +138,33 @@ async function login(req, res, next) {
 
     // Checked after the password so a suspended account's existence is not
     // revealed to someone guessing.
+    if (user.status === 'deleted') {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
     if (user.status === 'suspended') {
       return res.status(403).json({ error: 'Your account is suspended. Please contact support.' });
+    }
+
+    // Check device activation restriction: if user is a student,
+    // enforce one-time PIN first device activation and prevent multi-device logins.
+    let isActivated = false;
+    if (user.role !== 'admin') {
+      const activation = await DeviceActivation.findOne({ studentId: user._id });
+      isActivated = Boolean(activation?.isActivated && activation.status === 'activated');
+
+      // If already activated, enforce single primary device binding (System B rejection)
+      if (isActivated) {
+        const clientDeviceId = req.headers['x-device-id'] || req.body?.deviceId;
+        if (clientDeviceId && activation.activationDeviceId && clientDeviceId !== activation.activationDeviceId) {
+          // Reject System B without disrupting System A's session or login state
+          return res.status(403).json({
+            error:
+              'This account has already been activated on another device. Multi-device access is restricted. Please access your courses from your activated device, or contact the administrator to reset your activation.',
+            code: 'ALREADY_ACTIVATED_ON_OTHER_DEVICE',
+          });
+        }
+      }
     }
 
     // Generate a new unique session identifier for single-device login enforcement.
@@ -151,7 +193,7 @@ async function login(req, res, next) {
     }
 
     const token = generateToken(user, sessionId);
-    res.json({ student: user, token });
+    res.json({ student: user, token, isActivated });
   } catch (err) {
     next(err);
   }
@@ -164,6 +206,76 @@ async function getMe(req, res, next) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
     res.json(req.user);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PUT /api/auth/complete-profile
+ * Learner submits required personal details during initial onboarding.
+ */
+async function completeProfile(req, res, next) {
+  try {
+    const { name, phone, city, education, headline, bio } = req.body || {};
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (!phone || !String(phone).trim()) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    if (!city || !String(city).trim()) {
+      return res.status(400).json({ error: 'City / location is required' });
+    }
+    if (!education || !String(education).trim()) {
+      return res.status(400).json({ error: 'Educational background is required' });
+    }
+
+    if (name && String(name).trim()) {
+      req.user.name = String(name).trim().slice(0, 80);
+    }
+    req.user.phone = String(phone).trim().slice(0, 20);
+    req.user.city = String(city).trim().slice(0, 80);
+    req.user.education = String(education).trim().slice(0, 120);
+    if (headline !== undefined) req.user.headline = String(headline).trim().slice(0, 120);
+    if (bio !== undefined) req.user.bio = String(bio).trim().slice(0, 1000);
+    req.user.profileCompleted = true;
+    req.user.onboardingSubmittedAt = new Date();
+    await req.user.save();
+
+    // Update DeviceActivation onboarding details timestamp
+    await DeviceActivation.findOneAndUpdate(
+      { studentId: req.user._id },
+      {
+        $set: {
+          onboardingDetailsSubmittedAt: new Date(),
+        },
+        $setOnInsert: {
+          studentId: req.user._id,
+          email: req.user.email,
+          status: 'payment_pending',
+          paymentStatus: 'pending',
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    // Trigger Admin notification
+    await notifyAdmins(
+      {
+        type: 'learner_registered',
+        title: 'New Learner Onboarding Submitted',
+        message: `${req.user.name} (${req.user.email}) completed personal details. Payment verification pending.`,
+        link: `/admin/learners/${req.user._id}?tab=activation`,
+      },
+      { setting: 'admin.learnerRegistered' }
+    );
+
+    res.json({
+      message: 'Personal details saved successfully. Please wait for payment verification and activation PIN.',
+      student: req.user,
+    });
   } catch (err) {
     next(err);
   }
@@ -369,6 +481,7 @@ module.exports = {
   sendResetLink,
   logout,
   checkSession,
+  completeProfile,
   generateToken,
   MIN_PASSWORD_LENGTH,
 };

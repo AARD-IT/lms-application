@@ -17,6 +17,8 @@ import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
+import StudentActivation from './pages/StudentActivation.jsx';
+import PersonalDetails from './pages/PersonalDetails.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 // The authenticated bundle is only fetched once a student signs in.
@@ -133,9 +135,14 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/activate" element={<StudentActivation />} />
+          <Route path="/student/activate" element={<StudentActivation />} />
 
           {/* ---------- Authenticated ---------- */}
           <Route element={<ProtectedRoute />}>
+            <Route path="/complete-profile" element={<PersonalDetails />} />
+            <Route path="/onboarding" element={<PersonalDetails />} />
+
             <Route element={<DashboardLayout />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/my-courses" element={<MyCourses />} />

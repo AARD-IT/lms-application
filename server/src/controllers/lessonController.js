@@ -1,6 +1,8 @@
+const Course = require('../models/Course');
 const Lesson = require('../models/Lesson');
 const Progress = require('../models/Progress');
 const lessonProgress = require('../services/lessonProgressService');
+const { courseAccessFor } = require('../services/enrolmentService');
 
 /**
  * Merge each lesson with this student's progress row.
@@ -73,4 +75,44 @@ async function getLesson(req, res, next) {
   }
 }
 
-module.exports = { listLessonsForCourse, getLesson };
+/**
+ * GET /api/courses/:courseId/curriculum
+ * Public / student curriculum outline for course details & syllabus preview.
+ * Strips all stream URLs, Drive IDs, and sensitive playback data.
+ * All lessons are marked locked: true unless the student currently has verified access.
+ */
+async function getCurriculumPreview(req, res, next) {
+  try {
+    const course = await Course.findById(req.params.courseId).select('published');
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    if (course.published === false && req.user?.role !== 'admin') {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const lessons = await Lesson.find({ courseId: req.params.courseId }).sort(lessonProgress.COURSE_ORDER);
+
+    let hasAccess = false;
+    if (req.user) {
+      const access = await courseAccessFor(req.user, req.params.courseId);
+      hasAccess = Boolean(access.allowed);
+    }
+
+    const preview = lessons.map((lesson) => ({
+      _id: lesson._id,
+      courseId: lesson.courseId,
+      title: lesson.title,
+      description: lesson.description || '',
+      duration: lesson.duration || 0,
+      order: lesson.order,
+      folderId: lesson.folderId || null,
+      folderName: lesson.folderName || null,
+      locked: !hasAccess,
+    }));
+
+    res.json(preview);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { listLessonsForCourse, getLesson, getCurriculumPreview };

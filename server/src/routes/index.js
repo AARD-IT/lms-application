@@ -21,6 +21,9 @@ const insightsController = require('../controllers/adminInsightsController');
 const reviewController = require('../controllers/reviewController');
 const enquiryController = require('../controllers/enquiryController');
 const ticketController = require('../controllers/ticketController');
+const activationController = require('../controllers/activationController');
+const packageController = require('../controllers/packageController');
+const adminActivationRoutes = require('./adminActivationRoutes');
 const { requireAuth, optionalAuth, requireAdmin, requireSuperAdmin } = require('../middleware/authMiddleware');
 const {
   requireCourseAccess,
@@ -49,6 +52,23 @@ router.post('/auth/logout', optionalAuth, authController.logout);
 router.get('/auth/session', requireAuth, authController.checkSession);
 router.post('/auth/forgot-password', authController.forgotPassword);
 router.post('/auth/reset-password', authController.resetPassword);
+router.put('/auth/complete-profile', requireAuth, authController.completeProfile);
+
+// --- device activation & PIN verification ---
+router.post('/auth/activate', activationController.activateDevice);
+router.get('/auth/activation-status', requireAuth, activationController.getActivationStatus);
+
+// --- 3-tier course packages ---
+router.get('/packages', packageController.listPackages);
+router.get('/packages/:id', packageController.getPackage);
+
+// --- legacy activation route rejection ---
+router.all(['/activation', '/activation/*', '/admin/activations', '/admin/activations/*'], (_req, res) => {
+  res.status(410).json({
+    error: 'This legacy activation route has been permanently deprecated. Please use /api/auth/activate or /api/admin/activation.',
+    code: 'LEGACY_ACTIVATION_ROUTE_DEPRECATED',
+  });
+});
 
 // --- me ---
 router.get('/me', requireAuth, authController.getMe);
@@ -76,6 +96,7 @@ router.get('/settings/public', settingsController.getPublic);
 // --- courses (publicly browsable; `hasAccess` reflects whoever, if anyone, is signed in) ---
 router.get('/courses', optionalAuth, courseController.listCourses);
 router.get('/courses/:id', optionalAuth, courseController.getCourse);
+router.get('/courses/:courseId/curriculum', optionalAuth, lessonController.getCurriculumPreview);
 
 // --- admin courses ---
 router.post('/admin/courses', ...superAdmin, adminController.createCourse);
@@ -90,6 +111,7 @@ router.get('/admin/overview', ...staff, insightsController.getOverview);
 router.get('/admin/learners', ...staff, learnerController.listLearners);
 router.get('/admin/learners/:id', ...staff, learnerController.getLearner);
 router.patch('/admin/learners/:id/status', ...superAdmin, learnerController.setLearnerStatus);
+router.delete('/admin/learners/:id', ...superAdmin, learnerController.deleteLearner);
 // Full Access (every course, now and later) and Limited Access to selected materials.
 router.patch('/admin/learners/:id/full-access', ...superAdmin, learnerController.setLearnerFullAccess);
 router.put('/admin/learners/:id/materials', ...superAdmin, learnerController.setLearnerMaterials);
@@ -118,6 +140,9 @@ router.post('/admin/payments/:id/fail', ...superAdmin, paymentController.failPay
 router.post('/admin/payments/:id/cancel', ...superAdmin, paymentController.cancelPayment);
 router.post('/admin/payments/:id/retry', ...superAdmin, paymentController.retryPayment);
 router.get('/admin/enrollments', ...staff, enrollmentController.listAll);
+
+// --- admin: device activation & PIN management ---
+router.use('/admin/activation', adminActivationRoutes);
 
 // --- admin: image uploads (course thumbnails, platform logo) ---
 router.post('/admin/uploads/image', ...superAdmin, uploadThumbnail, uploadController.uploadImage);
@@ -167,15 +192,17 @@ router.get(
 );
 
 // --- admin lessons ---
+router.get('/admin/courses/:courseId/lessons', ...staff, adminController.getCourseLessons);
+router.put('/admin/courses/:courseId/lessons/reorder', ...superAdmin, adminController.reorderLessons);
 router.post('/admin/lessons', ...superAdmin, adminController.addLesson);
 router.put('/admin/lessons/:id', ...superAdmin, adminController.updateLesson);
 router.delete('/admin/lessons/:id', ...superAdmin, adminController.deleteLesson);
 
 // --- resources (study materials / PDFs) ---
-// Course access (or Full Access) shows all of a course's materials; Limited
-// Access shows just the ones shared with the learner. The controller decides.
+// Strictly course-authorized: only learners with valid course access can list or view resources.
 router.get('/courses/:courseId/resources', requireAuth, resourceController.listResourcesForCourse);
 router.get('/resources/mine', requireAuth, resourceController.listMine);
+router.get('/resources/:id', requireAuth, resourceController.getResourceById);
 
 // --- course reviews ---
 router.get('/courses/:courseId/reviews', optionalAuth, reviewController.listForCourse);

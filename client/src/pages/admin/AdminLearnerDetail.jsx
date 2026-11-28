@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Award,
@@ -17,11 +17,14 @@ import {
   PauseCircle,
   Phone,
   Plus,
+  ShieldAlert,
   ShieldOff,
   ShieldCheck,
+  Trash2,
   User,
 } from 'lucide-react';
 import {
+  deleteLearner,
   enrolLearner,
   getAllResources,
   getCourses,
@@ -38,6 +41,7 @@ import {
 import { usePageMeta } from '../../components/layout/DashboardLayout.jsx';
 import Button from '../../components/common/Button.jsx';
 import Modal from '../../components/common/Modal.jsx';
+import AdminLearnerActivation from '../../components/admin/AdminLearnerActivation.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
   AccountStatus,
@@ -67,10 +71,12 @@ const SUBMISSION_STATUS = {
 };
 
 const SOURCE_LABEL = {
-  payment: 'Paid',
+  razorpay: 'Razorpay Payment',
+  payment: 'Razorpay Payment',
   free: 'Free course',
-  manual: 'Granted by admin',
-  bulk: 'Bulk',
+  manual: 'Manual Admin Authorization',
+  complimentary: 'Complimentary Access',
+  bulk: 'Bulk Enrollment',
   full: 'Full Access',
 };
 
@@ -80,10 +86,11 @@ export default function AdminLearnerDetail() {
   const { isSuperAdmin } = useAuth();
   const flash = useFlash();
 
+  const [searchParams] = useSearchParams();
   const [record, setRecord] = useState(null);
   const [courses, setCourses] = useState([]);
   const [loadError, setLoadError] = useState('');
-  const [tab, setTab] = useState('courses');
+  const [tab, setTab] = useState(searchParams.get('tab') || 'courses');
   const [enrolCourseId, setEnrolCourseId] = useState('');
   const [busy, setBusy] = useState('');
   const [tempPassword, setTempPassword] = useState('');
@@ -99,6 +106,30 @@ export default function AdminLearnerDetail() {
     open: false,
     course: null,
   });
+
+  const navigate = useNavigate();
+  const [deleteModal, setDeleteModal] = useState({
+    open: false,
+    confirmationInput: '',
+    loading: false,
+  });
+
+  const handleDeleteLearner = async () => {
+    if (deleteModal.confirmationInput.trim() !== 'DELETE') {
+      flash.error('Please type DELETE to confirm deletion.');
+      return;
+    }
+
+    setDeleteModal((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await deleteLearner(record.learner.id || record.learner._id);
+      flash.success(res.message || 'Learner account deleted successfully.');
+      navigate('/admin/learners', { replace: true });
+    } catch (err) {
+      flash.error(toErrorMessage(err));
+      setDeleteModal((prev) => ({ ...prev, loading: false }));
+    }
+  };
 
   // Stores the reason without triggering a React re-render on every keystroke.
   const suspendReasonRef = useRef('');
@@ -393,6 +424,11 @@ export default function AdminLearnerDetail() {
 
   const tabs = [
     {
+      value: 'activation',
+      label: 'Device Activation & PIN',
+      icon: KeyRound,
+    },
+    {
       value: 'courses',
       label: 'Courses & progress',
       icon: BookOpen,
@@ -466,12 +502,23 @@ export default function AdminLearnerDetail() {
                 <Button
                   size="sm"
                   variant="secondary"
-                  loading={busy === 'reset'}
-                  onClick={() => resetPassword('temporary')}
+                  onClick={() => setTab('activation')}
                 >
                   <KeyRound className="h-4 w-4" aria-hidden="true" />
-                  Temporary password
+                  Device Activation &amp; PIN
                 </Button>
+
+                {learner.role === 'admin' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={busy === 'reset'}
+                    onClick={() => resetPassword('temporary')}
+                  >
+                    <KeyRound className="h-4 w-4" aria-hidden="true" />
+                    Temporary password
+                  </Button>
+                )}
 
                 <Button
                   size="sm"
@@ -486,6 +533,15 @@ export default function AdminLearnerDetail() {
                   )}
 
                   {suspended ? 'Activate account' : 'Suspend account'}
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => setDeleteModal({ open: true, confirmationInput: '', loading: false })}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Delete account
                 </Button>
               </div>
             )}
@@ -599,6 +655,15 @@ export default function AdminLearnerDetail() {
       </section>
 
       <AdminTabs tabs={tabs} value={tab} onChange={setTab} />
+
+      {/* --- device activation & PIN ---------------------------------------- */}
+      {tab === 'activation' && (
+        <AdminLearnerActivation
+          learner={learner}
+          courses={courses}
+          onUpdated={load}
+        />
+      )}
 
       {/* --- courses -------------------------------------------------------- */}
       {tab === 'courses' && (
@@ -1417,6 +1482,90 @@ export default function AdminLearnerDetail() {
               {reasonModal.course?.suspensionReason ||
                 'No reason specified'}
             </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Account Confirmation Modal */}
+      <Modal
+        open={deleteModal.open}
+        onClose={() =>
+          !deleteModal.loading &&
+          setDeleteModal({ open: false, confirmationInput: '', loading: false })
+        }
+        title="Delete Learner Account?"
+        description="Deleting an account is a serious, irreversible action. Please review the details below before confirming."
+        footer={
+          <div className="flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              disabled={deleteModal.loading}
+              onClick={() =>
+                setDeleteModal({ open: false, confirmationInput: '', loading: false })
+              }
+              className="rounded-xl border border-ink-200 bg-white px-4 py-2 text-xs font-semibold text-ink-700 transition hover:bg-ink-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleteModal.loading || deleteModal.confirmationInput.trim() !== 'DELETE'}
+              onClick={handleDeleteLearner}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-40"
+            >
+              {deleteModal.loading ? 'Deleting...' : 'Confirm Account Deletion'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4 py-2">
+          <div className="rounded-xl border border-red-200 bg-red-50/70 p-3.5 text-xs text-red-900 space-y-1.5">
+            <div className="flex items-center gap-2 font-semibold text-red-800">
+              <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
+              <span>Warning: Destructive Action</span>
+            </div>
+            <p>
+              This will permanently revoke all course access and single-device bindings for{' '}
+              <strong>{record?.learner?.name}</strong> ({record?.learner?.email}).
+            </p>
+            <p className="text-[11px] text-red-700">
+              Financial transactions and payment records are preserved according to data-retention and audit compliance standards.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-ink-50/70 p-3 text-xs text-ink-700 space-y-1">
+            <p>
+              <strong>Learner Name:</strong> {record?.learner?.name}
+            </p>
+            <p>
+              <strong>Email Address:</strong> {record?.learner?.email}
+            </p>
+            {record?.learner?.phone && (
+              <p>
+                <strong>Phone:</strong> {record?.learner?.phone}
+              </p>
+            )}
+            <p>
+              <strong>Current Status:</strong>{' '}
+              <span className="capitalize font-medium">{record?.learner?.status || 'active'}</span>
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="confirm-delete-learner-input" className="block text-xs font-semibold text-ink-800 mb-1">
+              To confirm deletion, type <span className="font-mono text-red-600 font-bold">DELETE</span> below:
+            </label>
+            <input
+              id="confirm-delete-learner-input"
+              type="text"
+              value={deleteModal.confirmationInput}
+              onChange={(e) =>
+                setDeleteModal((prev) => ({ ...prev, confirmationInput: e.target.value }))
+              }
+              placeholder="Type DELETE to confirm"
+              className="w-full rounded-xl border border-ink-200 bg-white p-2.5 text-xs text-ink-800 placeholder:text-ink-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+              autoComplete="off"
+            />
           </div>
         </div>
       </Modal>

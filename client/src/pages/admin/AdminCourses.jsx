@@ -19,21 +19,20 @@ import {
   addResource,
   createCourse,
   deleteCourse,
-  deleteLesson,
   deleteResource,
-  getCourseLessons,
+  getAdminCourseLessons,
   getCourseResources,
   getCourseStats,
   getCourses,
   toErrorMessage,
   updateCourse,
-  updateLesson,
 } from '../../api/client';
 import { safeExternalUrl } from '../../utils/url.js';
 import { usePageMeta } from '../../components/layout/DashboardLayout.jsx';
 import Button from '../../components/common/Button.jsx';
 import Input from '../../components/common/Input.jsx';
 import CourseContentEditor from '../../components/admin/CourseContentEditor.jsx';
+import CourseVideoManager from '../../components/admin/CourseVideoManager.jsx';
 import { EmptyRow, LoadingRow, PageHeader, Panel, Pill, StatTile, formatMoney, useFlash } from '../../components/admin/ui.jsx';
 
 /**
@@ -74,8 +73,6 @@ export default function AdminCourses() {
 
   const [editingCourseId, setEditingCourseId] = useState(null);
   const [editingCourseData, setEditingCourseData] = useState(null);
-  const [editingLessonId, setEditingLessonId] = useState(null);
-  const [editingLessonData, setEditingLessonData] = useState(null);
 
   usePageMeta('Courses', 'Courses, lessons and study material.');
 
@@ -178,7 +175,7 @@ export default function AdminCourses() {
     if (!courseLessons[courseId]) {
       setLoadingLessons((prev) => ({ ...prev, [courseId]: true }));
       try {
-        const lessons = await getCourseLessons(courseId);
+        const lessons = await getAdminCourseLessons(courseId);
         setCourseLessons((prev) => ({ ...prev, [courseId]: lessons }));
       } catch (err) {
         flash.error(toErrorMessage(err));
@@ -211,20 +208,6 @@ export default function AdminCourses() {
     }
   };
 
-  const handleDeleteLesson = async (lessonId, lessonTitle, courseId) => {
-    if (!window.confirm(`Delete the lesson "${lessonTitle}"?`)) return;
-    try {
-      await deleteLesson(lessonId);
-      setCourseLessons((prev) => ({ ...prev, [courseId]: prev[courseId].filter((l) => l._id !== lessonId) }));
-      setCourses((prev) =>
-        prev.map((c) => (c._id === courseId ? { ...c, lessons: (c.lessons || []).filter((id) => id !== lessonId) } : c))
-      );
-      flash.success(`Lesson "${lessonTitle}" deleted.`);
-    } catch (err) {
-      flash.error(toErrorMessage(err));
-    }
-  };
-
   const startEditCourse = (e, course) => {
     e.stopPropagation();
     setEditingCourseId(course._id);
@@ -252,29 +235,6 @@ export default function AdminCourses() {
       return updated;
     } catch (err) {
       throw new Error(toErrorMessage(err));
-    }
-  };
-
-  const startEditLesson = (lesson) => {
-    setEditingLessonId(lesson._id);
-    setEditingLessonData({
-      title: lesson.title,
-      description: lesson.description || '',
-      date: lesson.date ? lesson.date.split('T')[0] : '',
-    });
-  };
-
-  const handleSaveLessonEdit = async (courseId, lessonId) => {
-    try {
-      const updated = await updateLesson(lessonId, editingLessonData);
-      setCourseLessons((prev) => ({
-        ...prev,
-        [courseId]: prev[courseId].map((l) => (l._id === lessonId ? { ...l, ...updated } : l)),
-      }));
-      setEditingLessonId(null);
-      flash.success('Lesson updated.');
-    } catch (err) {
-      flash.error(toErrorMessage(err));
     }
   };
 
@@ -589,82 +549,60 @@ export default function AdminCourses() {
                           pricing and publishing — what Browse Courses reads. */}
                       <CourseContentEditor course={course} onSave={handleSaveCourseContent} onSaved={fetchCourseStats} />
 
-                      <div>
-                        <h4 className="mb-3 text-[13px] font-semibold text-ink-800">Lessons</h4>
-                        {loadingLessons[course._id] ? (
-                          <p className="flex items-center gap-2 text-sm text-ink-500">
-                            <Loader2 className="h-4 w-4 animate-spin" /> Loading lessons…
-                          </p>
-                        ) : courseLessons[course._id]?.length === 0 ? (
-                          <p className="text-sm text-ink-500">No lessons added to this course yet.</p>
-                        ) : (
-                          <div className="flex flex-col gap-2">
-                            {courseLessons[course._id]?.map((lesson) => (
-                              <div key={lesson._id} className="flex flex-col gap-3 rounded-xl border border-ink-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex flex-1 items-center gap-3">
-                                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-50 text-xs font-semibold text-primary-700">
-                                    {lesson.order}
-                                  </span>
-                                  {editingLessonId === lesson._id ? (
-                                    <div className="flex w-full flex-col gap-2">
-                                      <div className="flex flex-col gap-2 sm:flex-row">
-                                        <input
-                                          type="text"
-                                          className="admin-field w-full py-1"
-                                          value={editingLessonData.title}
-                                          onChange={(e) => setEditingLessonData({ ...editingLessonData, title: e.target.value })}
-                                          aria-label="Lesson title"
-                                        />
-                                        <input
-                                          type="date"
-                                          className="admin-field py-1 sm:w-40"
-                                          value={editingLessonData.date}
-                                          onChange={(e) => setEditingLessonData({ ...editingLessonData, date: e.target.value })}
-                                          aria-label="Lesson date"
-                                        />
-                                      </div>
-                                      <textarea
-                                        className="admin-field min-h-[60px] w-full"
-                                        value={editingLessonData.description}
-                                        onChange={(e) => setEditingLessonData({ ...editingLessonData, description: e.target.value })}
-                                        placeholder="Lesson description…"
-                                        aria-label="Lesson description"
-                                      />
-                                    </div>
-                                  ) : (
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-medium text-ink-800">{lesson.title}</p>
-                                      {lesson.description && <p className="mt-0.5 truncate text-xs text-ink-500">{lesson.description}</p>}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center gap-1 self-end sm:self-auto">
-                                  {editingLessonId === lesson._id ? (
-                                    <>
-                                      <button onClick={() => handleSaveLessonEdit(course._id, lesson._id)} className="rounded-lg p-1.5 text-emerald-600 transition hover:bg-emerald-50" aria-label="Save lesson">
-                                        <Save className="h-4 w-4" />
-                                      </button>
-                                      <button onClick={() => setEditingLessonId(null)} className="rounded-lg p-1.5 text-ink-400 transition hover:bg-ink-100" aria-label="Cancel">
-                                        <X className="h-4 w-4" />
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <button onClick={() => startEditLesson(lesson)} className="rounded-lg p-1.5 text-primary-600 transition hover:bg-primary-50" aria-label={`Edit ${lesson.title}`}>
-                                        <Pencil className="h-4 w-4" />
-                                      </button>
-                                      <button onClick={() => handleDeleteLesson(lesson._id, lesson.title, course._id)} className="rounded-lg p-1.5 text-red-500 transition hover:bg-red-50" aria-label={`Delete ${lesson.title}`}>
-                                        <Trash2 className="h-4 w-4" />
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      {/* Course Curriculum & Video Management (Modules, Reorder, Replace Video, Edit, Remove) */}
+                      <CourseVideoManager
+                        course={course}
+                        lessons={courseLessons[course._id] || []}
+                        loading={loadingLessons[course._id]}
+                        onLessonAdded={(newLesson) => {
+                          setCourseLessons((prev) => ({
+                            ...prev,
+                            [course._id]: [...(prev[course._id] || []), newLesson],
+                          }));
+                          setCourses((prev) =>
+                            prev.map((c) =>
+                              c._id === course._id
+                                ? { ...c, lessons: [...(c.lessons || []), newLesson._id] }
+                                : c
+                            )
+                          );
+                          fetchCourseStats();
+                        }}
+                        onLessonUpdated={(updatedLesson) => {
+                          setCourseLessons((prev) => ({
+                            ...prev,
+                            [course._id]: (prev[course._id] || []).map((l) =>
+                              l._id === updatedLesson._id ? { ...l, ...updatedLesson } : l
+                            ),
+                          }));
+                        }}
+                        onLessonDeleted={(deletedLessonId) => {
+                          setCourseLessons((prev) => ({
+                            ...prev,
+                            [course._id]: (prev[course._id] || [])
+                              .filter((l) => l._id !== deletedLessonId)
+                              .map((l, idx) => ({ ...l, order: idx + 1 })),
+                          }));
+                          setCourses((prev) =>
+                            prev.map((c) =>
+                              c._id === course._id
+                                ? {
+                                    ...c,
+                                    lessons: (c.lessons || []).filter((id) => id !== deletedLessonId),
+                                  }
+                                : c
+                            )
+                          );
+                          fetchCourseStats();
+                        }}
+                        onLessonsReordered={(reorderedLessons) => {
+                          setCourseLessons((prev) => ({
+                            ...prev,
+                            [course._id]: reorderedLessons,
+                          }));
+                        }}
+                        flash={flash}
+                      />
 
                       <div>
                         <h4 className="mb-3 text-[13px] font-semibold text-ink-800">Study materials</h4>

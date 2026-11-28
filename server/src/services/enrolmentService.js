@@ -1,8 +1,11 @@
 const Course = require('../models/Course');
 const CourseAccess = require('../models/CourseAccess');
+const DeviceActivation = require('../models/DeviceActivation');
+const Enrollment = require('../models/Enrollment');
 const User = require('../models/User');
 const settingsService = require('./settingsService');
 const { notifyUser, notifyAdmins, activeLearnerIds } = require('./notificationService');
+const { ACTIVATION_STATUS, PAYMENT_STATUS } = require('../constants');
 
 /**
  * The one place course access is granted, and the payment state machine
@@ -32,7 +35,7 @@ async function courseAccessFor(user, courseId) {
   if (!user || !courseId) return { allowed: false, reason: 'none' };
   if (user.role === 'admin') return { allowed: true, via: 'staff' };
 
-  // Explicit course-specific suspension check: Full Access must NOT bypass an explicit suspension
+  // Explicit course-specific suspension check
   const grant = await CourseAccess.findOne({ studentId: user._id, courseId });
   if (grant?.suspended) {
     return {
@@ -49,9 +52,40 @@ async function courseAccessFor(user, courseId) {
     return { allowed: false, reason: 'none' };
   }
 
-  // Full Access covers every published course; drafts stay with staff until released.
-  if (user.fullAccess && (await Course.exists({ _id: courseId, published: { $ne: false } }))) {
-    return { allowed: true, via: 'full' };
+  // Check centralized Device Activation settings:
+  const settings = await settingsService.get();
+  const activationEnabled = settings.activation?.systemEnabled !== false;
+
+  if (activationEnabled) {
+    const activation = await DeviceActivation.findOne({ studentId: user._id });
+    if (!activation) {
+      return { allowed: false, reason: 'none' };
+    }
+    if (activation.status === ACTIVATION_STATUS.REVOKED) {
+      return {
+        allowed: false,
+        reason: 'suspended',
+        suspensionReason: activation.revocationReason || 'Your course activation has been revoked by the administrator.',
+      };
+    }
+    if (!activation.isActivated || activation.status !== ACTIVATION_STATUS.ACTIVATED) {
+      return {
+        allowed: false,
+        reason: 'none',
+      };
+    }
+    if (activation.paymentStatus !== PAYMENT_STATUS.VERIFIED) {
+      return {
+        allowed: false,
+        reason: 'none',
+      };
+    }
+    const isAuthorized =
+      (activation.authorizedCourses || []).some((cId) => String(cId) === String(courseId)) ||
+      (grant && isGrantLive(grant));
+    if (!isAuthorized) {
+      return { allowed: false, reason: 'none' };
+    }
   }
 
   if (!grant || !grant.active) return { allowed: false, reason: 'none' };
@@ -76,9 +110,36 @@ async function learnerIdsWithAccess(courseId) {
   });
 }
 
-/** Ids of the courses a learner can open through their own grants (not Full Access). */
+/** Ids of the courses a learner can open through their own grants. Strictly requires verified device activation when enabled. */
 async function grantedCourseIds(studentId) {
-  const grants = await CourseAccess.find({ studentId, active: true, suspended: { $ne: true } }).select('courseId active suspended expiresAt');
+  const settings = await settingsService.get();
+  const activationEnabled = settings.activation?.systemEnabled !== false;
+
+  if (activationEnabled) {
+    const activation = await DeviceActivation.findOne({ studentId });
+    if (
+      !activation ||
+      !activation.isActivated ||
+      activation.status !== ACTIVATION_STATUS.ACTIVATED ||
+      activation.paymentStatus !== PAYMENT_STATUS.VERIFIED
+    ) {
+      return [];
+    }
+
+    const grants = await CourseAccess.find({
+      studentId,
+      courseId: { $in: activation.authorizedCourses || [] },
+      active: true,
+      suspended: { $ne: true },
+    }).select('courseId active suspended expiresAt');
+    return grants.filter(isGrantLive).map((g) => g.courseId);
+  }
+
+  const grants = await CourseAccess.find({
+    studentId,
+    active: true,
+    suspended: { $ne: true },
+  }).select('courseId active suspended expiresAt');
   return grants.filter(isGrantLive).map((g) => g.courseId);
 }
 
@@ -124,7 +185,7 @@ async function setFullAccess(student, enabled, { by } = {}) {
  */
 async function grantCourseAccess(studentId, course, { by, source = 'manual', learnerNotice, notifyStaff = true } = {}) {
   const existing = await CourseAccess.findOne({ studentId, courseId: course._id });
-  if (isGrantLive(existing)) return { grant: existing, alreadyActive: true };
+  const alreadyLive = isGrantLive(existing);
 
   const { learning } = await settingsService.get();
   const expiresAt =
@@ -148,7 +209,78 @@ async function grantCourseAccess(studentId, course, { by, source = 'manual', lea
     { new: true, upsert: true }
   );
 
-  if (learnerNotice !== false) {
+  // 1. Ensure Enrollment record exists and is marked completed
+  const isRazorpay = source === 'razorpay' || source === 'payment';
+  let enrollment = await Enrollment.findOne({ studentId, courseId: course._id });
+  if (!enrollment) {
+    enrollment = new Enrollment({
+      studentId,
+      courseId: course._id,
+      transactionId: Enrollment.generateTransactionId(),
+      amount: source === 'complimentary' || source === 'free' ? 0 : Number(course.price) || 0,
+      currency: 'INR',
+      method: isRazorpay ? 'razorpay' : source === 'complimentary' || source === 'free' ? 'free' : 'manual',
+      gateway: isRazorpay ? 'razorpay' : 'manual',
+      status: 'completed',
+      confirmedBy: by || undefined,
+      confirmedAt: new Date(),
+      history: [{ status: 'completed', note: `Access granted via ${source}`, by, at: new Date() }],
+    });
+    await enrollment.save();
+  } else if (enrollment.status !== 'completed') {
+    enrollment.status = 'completed';
+    enrollment.confirmedBy = by || enrollment.confirmedBy || undefined;
+    enrollment.confirmedAt = enrollment.confirmedAt || new Date();
+    enrollment.history.push({ status: 'completed', note: `Access confirmed via ${source}`, by, at: new Date() });
+    await enrollment.save();
+  }
+
+  // 2. Synchronize with DeviceActivation
+  const user = await User.findById(studentId);
+  if (user) {
+    let activation = await DeviceActivation.findOne({ studentId });
+    if (!activation) {
+      activation = new DeviceActivation({
+        studentId: user._id,
+        email: user.email,
+        status: 'course_authorized',
+        paymentStatus: 'verified',
+        paymentVerifiedAt: new Date(),
+        paymentAmount: enrollment?.amount || 0,
+        paymentReference: enrollment?.reference || enrollment?.transactionId || '',
+        authorizedCourses: [course._id],
+      });
+    } else {
+      activation.paymentStatus = 'verified';
+      activation.paymentVerifiedAt = activation.paymentVerifiedAt || new Date();
+      if (!activation.paymentReference && enrollment?.reference) {
+        activation.paymentReference = enrollment.reference;
+      }
+      const courseSet = new Set((activation.authorizedCourses || []).map(String));
+      courseSet.add(String(course._id));
+      activation.authorizedCourses = Array.from(courseSet);
+
+      if (['payment_pending', 'payment_verified', 'not_activated'].includes(activation.status)) {
+        activation.status = 'course_authorized';
+      }
+    }
+
+    activation.auditLog.push({
+      action: isRazorpay ? 'payment_verified' : 'course_authorized',
+      performedBy: by || user._id,
+      performedAt: new Date(),
+      details: {
+        courseId: course._id,
+        courseTitle: course.title,
+        source,
+        autoEnrolled: Boolean(!by),
+      },
+    });
+
+    await activation.save();
+  }
+
+  if (learnerNotice !== false && !alreadyLive) {
     const notice = learnerNotice || {
       title: 'Course access granted',
       message: `You now have access to "${course.title}". Start learning any time.`,
@@ -166,7 +298,7 @@ async function grantCourseAccess(studentId, course, { by, source = 'manual', lea
     );
   }
 
-  if (notifyStaff) {
+  if (notifyStaff && !alreadyLive) {
     const student = await User.findById(studentId).select('name');
     await notifyAdmins(
       {
@@ -182,7 +314,7 @@ async function grantCourseAccess(studentId, course, { by, source = 'manual', lea
     );
   }
 
-  return { grant, alreadyActive: false };
+  return { grant, alreadyActive: alreadyLive };
 }
 
 /** Turns access off. Returns the grant, or null if there was none. */
@@ -202,6 +334,18 @@ async function revokeCourseAccess(studentId, course) {
     { new: true, upsert: true }
   );
   if (!grant) return null;
+
+  // Cleanly remove only this course from DeviceActivation.authorizedCourses
+  const activation = await DeviceActivation.findOne({ studentId });
+  if (activation && activation.authorizedCourses?.length) {
+    activation.authorizedCourses = activation.authorizedCourses.filter(
+      (cId) => String(cId) !== String(course._id)
+    );
+    if (activation.authorizedCourses.length === 0 && activation.status === 'course_authorized') {
+      activation.status = 'payment_verified';
+    }
+    await activation.save();
+  }
 
   await notifyUser(studentId, {
     type: 'access_revoked',
@@ -261,7 +405,7 @@ async function markPaymentSuccessful(enrollment, { reference = '', by, note = ''
   if (shouldEnrol) {
     const result = await grantCourseAccess(student._id, course, {
       by,
-      source: 'payment',
+      source: enrollment.gateway === 'razorpay' ? 'razorpay' : 'payment',
       learnerNotice: {
         title: 'Payment successful',
         message: `Your payment of ${rupees(enrollment.amount)} is confirmed and "${course.title}" is now unlocked.`,

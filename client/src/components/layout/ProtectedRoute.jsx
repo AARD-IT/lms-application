@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
  * Sends signed-out visitors to /login and remembers where they were heading.
  */
 export default function ProtectedRoute() {
-  const { isAuthenticated, initialising } = useAuth();
+  const { isAuthenticated, initialising, student } = useAuth();
   const location = useLocation();
 
   if (initialising) {
@@ -20,6 +20,16 @@ export default function ProtectedRoute() {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // If learner has not completed required personal details, redirect to /complete-profile
+  if (
+    student &&
+    student.role !== 'admin' &&
+    !student.profileCompleted &&
+    location.pathname !== '/complete-profile'
+  ) {
+    return <Navigate to="/complete-profile" replace />;
   }
 
   return <Outlet />;

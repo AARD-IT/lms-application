@@ -19,7 +19,7 @@ async function getOverview(req, res, next) {
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    const learnerFilter = { role: { $ne: 'admin' } };
+    const learnerFilter = { role: { $ne: 'admin' }, status: { $ne: 'deleted' } };
 
     const [
       learners,

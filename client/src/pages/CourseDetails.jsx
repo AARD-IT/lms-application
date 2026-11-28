@@ -12,11 +12,12 @@ import {
   Heart,
   Hourglass,
   Infinity as InfinityIcon,
+  Key,
   Lock,
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import { getCourse, getCourseLessons, toErrorMessage } from '../api/client';
+import { getCourse, getCourseCurriculum, getCourseLessons, toErrorMessage } from '../api/client';
 import { useIsDashboard, usePageMeta } from '../components/layout/DashboardLayout.jsx';
 import Avatar from '../components/common/Avatar.jsx';
 import Badge from '../components/common/Badge.jsx';
@@ -35,6 +36,7 @@ import useWishlist from '../hooks/useWishlist.js';
 import { compactNumber, formatHours, formatPrice } from '../utils/course.js';
 import { formatDuration } from '../utils/format.js';
 import { hasRichText } from '../utils/sanitize.js';
+import { COURSE_ACCESS_STATUS } from '../constants';
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
@@ -64,18 +66,13 @@ export default function CourseDetails() {
         if (cancelled) return null;
         setCourse(courseData);
 
-        // Locked courses have no lessons the student can see yet — skip the
-        // (403-ing) lessons request rather than surfacing it as an error.
-        if (!courseData.hasAccess) {
-          setLessons([]);
-          setTab('overview');
-          setStatus('ready');
-          return null;
-        }
+        const fetchLessons = courseData.hasAccess
+          ? getCourseLessons(courseId)
+          : getCourseCurriculum(courseId);
 
-        return getCourseLessons(courseId).then((lessonData) => {
+        return fetchLessons.then((lessonData) => {
           if (cancelled) return;
-          setLessons(lessonData);
+          setLessons(lessonData || []);
           // A course with no outcomes or requirements yet would show an
           // almost empty Overview, so open on the curriculum instead.
           const hasOverview =
@@ -111,12 +108,22 @@ export default function CourseDetails() {
   const started = course.progress > 0;
   const complete = course.progress >= 100;
   const saved = isSaved(course._id);
-  const locked = isAuthenticated && (course.hasAccess === false || isSuspended);
+
+  const accessStatus =
+    course.accessStatus ||
+    (isSuspended
+      ? COURSE_ACCESS_STATUS.SUSPENDED
+      : course.hasAccess
+        ? COURSE_ACCESS_STATUS.ACCESS_GRANTED
+        : COURSE_ACCESS_STATUS.LOCKED);
+  const isAccessGranted = accessStatus === COURSE_ACCESS_STATUS.ACCESS_GRANTED;
+  const isActivationPending = accessStatus === COURSE_ACCESS_STATUS.ACTIVATION_PENDING;
+  const isPaymentPending = accessStatus === COURSE_ACCESS_STATUS.PAYMENT_PENDING;
+  const locked = !isAccessGranted || isSuspended;
 
   // A locked course the student has already paid for is waiting on the admin
-  // to confirm the payment, which is a very different message from "you
-  // need to enrol".
-  const awaitingPayment = locked && !isSuspended && course.enrollmentStatus === 'pending';
+  // to confirm the payment, which is a very different message from "you need to enrol".
+  const awaitingPayment = isPaymentPending || (locked && !isSuspended && course.enrollmentStatus === 'pending');
 
   const facts = [
     { icon: BookOpen, label: `${course.lessonCount} lessons` },
@@ -155,19 +162,21 @@ export default function CourseDetails() {
     : !isAuthenticated
     ? // Signed-out visitors register first, then come back to this course.
       { to: `/register?next=${encodeURIComponent(`/courses/${course._id}/enrol`)}`, label: 'Enrol Now' }
-    : awaitingPayment
-      ? null
-      : locked
-        ? {
-            to: `/courses/${course._id}/enrol`,
-            label: course.price > 0 ? 'Proceed to Payment' : 'Enrol for Free',
-          }
-        : nextLesson
+    : isActivationPending
+      ? { to: '/activate', label: 'Activate Access' }
+      : awaitingPayment
+        ? null
+        : !isAccessGranted
           ? {
-              to: `/learn/${course._id}/${nextLesson._id}`,
-              label: complete ? 'Review Course' : started ? 'Continue Learning' : 'Start Course',
+              to: `/courses/${course._id}/enrol`,
+              label: course.price > 0 ? 'Proceed to Payment' : 'Enrol for Free',
             }
-          : { to: '/my-courses', label: 'Back to My Courses' };
+          : nextLesson
+            ? {
+                to: `/learn/${course._id}/${nextLesson._id}`,
+                label: complete ? 'Review Course' : started ? 'Continue Learning' : 'Start Course',
+              }
+            : { to: '/my-courses', label: 'Back to My Courses' };
 
   return (
     <div className="space-y-6">
@@ -184,6 +193,23 @@ export default function CourseDetails() {
                 Secure video
               </Badge>
             )}
+            {isAccessGranted ? (
+              <Badge tone="success" icon={CheckCircle2}>
+                Access Granted
+              </Badge>
+            ) : isActivationPending ? (
+              <Badge tone="warning" icon={Key}>
+                Activation Pending
+              </Badge>
+            ) : isPaymentPending ? (
+              <Badge tone="warning" icon={Hourglass}>
+                Payment Verification Pending
+              </Badge>
+            ) : isSuspended ? (
+              <Badge tone="error" icon={Lock}>
+                Access Suspended
+              </Badge>
+            ) : null}
           </div>
 
           {/* The dashboard header already renders this page's <h1>. */}
@@ -315,48 +341,92 @@ export default function CourseDetails() {
           {tab === 'curriculum' && (
             <section className="card overflow-hidden">
               <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4">
-                <h2 className="text-sm font-semibold text-ink-900">Course content</h2>
-                {!locked && (
-                  <p className="text-xs text-ink-500">
-                    {lessons.length} lessons · {formatDuration(totalSeconds)}
-                  </p>
-                )}
+                <div>
+                  <h2 className="text-sm font-semibold text-ink-900">Course content & syllabus</h2>
+                  {!isAccessGranted && (
+                    <p className="mt-0.5 text-xs text-ink-500">
+                      Curriculum preview — enroll and activate to unlock full video lessons.
+                    </p>
+                  )}
+                </div>
+                <p className="text-xs text-ink-500">
+                  {lessons.length} lessons {totalSeconds > 0 ? `· ${formatDuration(totalSeconds)}` : ''}
+                </p>
               </div>
-              {locked ? (
-                <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-                  <Lock className={`h-8 w-8 ${isSuspended ? 'text-red-500' : 'text-ink-300'}`} aria-hidden="true" />
-                  {isSuspended ? (
-                    <div className="space-y-1">
-                      <p className="max-w-sm text-sm font-semibold text-red-950">
-                        Course Access Temporarily Locked
+
+              {isSuspended ? (
+                <div className="border-b border-red-200 bg-red-50/70 p-4 text-xs text-red-900">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Lock className="h-4 w-4 text-red-600" />
+                    Course Access Temporarily Locked
+                  </div>
+                  <p className="mt-1">
+                    Your access to this course is on hold. Lessons and learning materials are locked while suspended.
+                  </p>
+                </div>
+              ) : isActivationPending ? (
+                <div className="border-b border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <Key className="h-4 w-4 text-amber-600" /> Device Activation Required
                       </p>
-                      <p className="max-w-md text-xs text-ink-600">
-                        Your access to this course is currently on hold. Lessons and learning materials are locked while suspended.
+                      <p className="mt-1 text-amber-800">
+                        Payment verified. Please activate your device using your 4-digit PIN to unlock video lessons.
                       </p>
                     </div>
-                  ) : awaitingPayment ? (
-                    <p className="max-w-sm text-sm text-ink-600">
-                      The full lesson list unlocks once your payment is confirmed.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="max-w-sm text-sm text-ink-600">
-                        Enrol in this course to unlock all {course.lessonCount} lessons.
+                    <Button to="/activate" size="sm" variant="secondary" className="shrink-0">
+                      Activate Access
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ) : awaitingPayment ? (
+                <div className="border-b border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900">
+                  <p className="font-semibold flex items-center gap-1.5">
+                    <Hourglass className="h-4 w-4 text-amber-600" /> Payment Under Verification
+                  </p>
+                  <p className="mt-1 text-amber-800">
+                    Payment received. Admin manual verification is in progress. Once confirmed, you will receive your 4-digit activation PIN.
+                  </p>
+                </div>
+              ) : !isAccessGranted ? (
+                <div className="border-b border-ink-100 bg-ink-50/70 p-4 text-xs text-ink-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <Lock className="h-4 w-4 text-ink-500" /> Curriculum Preview
                       </p>
-                      <Button to={`/courses/${course._id}/enrol`} size="sm">
-                        {course.price > 0 ? 'Proceed to Payment' : 'Enrol for Free'}
-                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                      </Button>
-                    </>
-                  )}
+                      <p className="mt-1 text-ink-600">
+                        Browse the course syllabus below. Enrol to unlock complete lessons and downloadable materials.
+                      </p>
+                    </div>
+                    <Button to={`/courses/${course._id}/enrol`} size="sm" className="shrink-0">
+                      {course.price > 0 ? 'Proceed to Payment' : 'Enrol for Free'}
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {lessons.length === 0 ? (
+                <div className="p-8 text-center text-sm text-ink-500">
+                  No lessons published for this course yet.
                 </div>
               ) : (
                 <Curriculum
                   lessons={lessons}
                   courseId={course._id}
-                  linkTo={(cid, lid) => (isAuthenticated ? `/learn/${cid}/${lid}` : '/login')}
-                  // Lessons unlock one at a time; the API marks the ones not reached yet.
-                  isLocked={(lesson) => Boolean(lesson.locked)}
+                  linkTo={(cid, lid) =>
+                    !isAccessGranted
+                      ? isActivationPending
+                        ? '/activate'
+                        : `/courses/${cid}/enrol`
+                      : isAuthenticated
+                        ? `/learn/${cid}/${lid}`
+                        : '/login'
+                  }
+                  isLocked={(lesson) => !isAccessGranted || Boolean(lesson.locked)}
                 />
               )}
             </section>
@@ -402,7 +472,7 @@ export default function CourseDetails() {
                     Your access to this course is currently on hold.
                   </p>
                   <p className="mt-1.5 text-[12px] leading-relaxed text-red-700">
-                    Please complete your pending registration or payment to unlock the course and continue learning. If you have already completed the required steps, please contact the administration team for assistance.
+                    Please complete your pending registration or payment to unlock the course and continue learning.
                   </p>
                   {course.suspensionReason && (
                     <div className="mt-2.5 rounded-lg border border-red-200 bg-white/90 p-2.5 text-[11.5px] text-red-900">
@@ -414,17 +484,34 @@ export default function CourseDetails() {
                     <Badge tone="error" icon={Lock}>Status: Access Suspended</Badge>
                   </div>
                 </div>
+              ) : isActivationPending ? (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-950">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <Key className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                    Device Activation Pending
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-amber-800">
+                    Payment verified. Please activate your device using your 4-digit PIN to access this course.
+                  </p>
+                  <div className="mt-3">
+                    <Badge tone="warning" icon={Key}>Status: Activation Pending</Badge>
+                  </div>
+                </div>
               ) : awaitingPayment ? (
-                <div className="mb-5 flex items-start gap-2.5 rounded-lg bg-amber-50 p-3 text-[13px] font-medium text-amber-800">
-                  <Hourglass className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span>
-                    Payment received — we&apos;re confirming it now. The course unlocks as soon as
-                    that is done.
-                  </span>
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-950">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <Hourglass className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                    Payment Verification Pending
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-amber-800">
+                    Payment received. Awaiting admin manual verification before course activation.
+                  </p>
+                  <div className="mt-3">
+                    <Badge tone="warning" icon={Hourglass}>Status: Under Review</Badge>
+                  </div>
                 </div>
-              ) : locked ? (
-                /* Not enrolled yet: the panel becomes the price and the
-                   route into checkout. */
+              ) : !isAccessGranted ? (
+                /* Not enrolled yet: the panel becomes the price and the route into checkout. */
                 <div className="mb-5">
                   <div className="flex flex-wrap items-baseline gap-2.5">
                     <p className="text-2xl font-bold text-ink-900">{formatPrice(course.price)}</p>
@@ -441,25 +528,8 @@ export default function CourseDetails() {
                     One-time payment · lifetime access
                   </p>
                 </div>
-              ) : isAuthenticated ? (
-                <CourseProgress course={course} className="mb-5" />
               ) : (
-                <div className="mb-5">
-                  <div className="flex flex-wrap items-baseline gap-2.5">
-                    <p className="text-2xl font-bold text-ink-900">{formatPrice(course.price)}</p>
-                    {discount > 0 && (
-                      <>
-                        <p className="text-base text-ink-400 line-through">
-                          {formatPrice(course.originalPrice)}
-                        </p>
-                        <Badge tone="success">{discount}% off</Badge>
-                      </>
-                    )}
-                  </div>
-                  <p className="mt-1.5 text-[13px] text-ink-500">
-                    One-time payment · lifetime access
-                  </p>
-                </div>
+                <CourseProgress course={course} className="mb-5" />
               )}
 
               {/* Limited Access: some of this course's materials were shared

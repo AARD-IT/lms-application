@@ -9,6 +9,7 @@ import {
   Download,
   Hourglass,
   IndianRupee,
+  KeyRound,
   Pencil,
   RotateCcw,
   Search,
@@ -300,13 +301,24 @@ export default function AdminPayments() {
                               <Link to={`/admin/learners/${payment.studentId.id}`} className="block whitespace-nowrap font-medium text-ink-900 hover:text-primary-700">
                                 {payment.studentId.name}
                               </Link>
-                              <button
-                                type="button"
-                                onClick={() => setFilter('studentId', payment.studentId.id)}
-                                className="whitespace-nowrap text-[11.5px] font-medium text-primary-600 hover:underline"
-                              >
-                                Payment history
-                              </button>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => setFilter('studentId', payment.studentId.id)}
+                                  className="whitespace-nowrap text-[11.5px] font-medium text-primary-600 hover:underline"
+                                >
+                                  Payment history
+                                </button>
+                                <span className="text-ink-300">&bull;</span>
+                                <Link
+                                  to={`/admin/learners/${payment.studentId.id}?tab=activation`}
+                                  className="inline-flex items-center gap-1 whitespace-nowrap text-[11.5px] font-semibold text-primary-700 hover:text-primary-800"
+                                  title="Manage Device Activation & PIN"
+                                >
+                                  <KeyRound className="h-3 w-3" />
+                                  Activation PIN
+                                </Link>
+                              </div>
                             </>
                           ) : (
                             <span className="text-ink-400">Deleted account</span>
@@ -341,6 +353,15 @@ export default function AdminPayments() {
                                 <IconAction label="Cancel enrolment" onClick={() => onCancel(payment)} disabled={busy} tone="gray" icon={Ban} />
                               )}
                               <IconAction label="Edit reference" onClick={() => onEditReference(payment)} disabled={busy} icon={Pencil} />
+                              {payment.studentId && (
+                                <Link
+                                  to={`/admin/learners/${payment.studentId.id}?tab=activation`}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 hover:bg-primary-50 hover:text-primary-700 transition"
+                                  title="Manage Device Activation & PIN"
+                                >
+                                  <KeyRound className="h-4 w-4" />
+                                </Link>
+                              )}
                             </div>
                           ) : (
                             <span className="block text-right text-[12px] text-ink-400">View only</span>

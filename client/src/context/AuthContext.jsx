@@ -5,15 +5,8 @@ import { checkSession, getMe, setAuthToken, setUnauthorizedHandler, updateMe } f
 /**
  * Single source of truth for "who is signed in".
  *
- * The current Express backend uses mock authentication (middleware/mockAuth.js)
- * and exposes no /api/auth/* routes, so this provider works in two modes:
- *
- *   1. Real backend  — POST /api/auth/login|register returns { student, token }.
- *   2. Demo fallback — those routes 404, so we establish the session from
- *      GET /api/me (the mocked demo student) instead.
- *
- * Either way the rest of the app only ever reads this context, so swapping in
- * real auth later requires no changes outside this file.
+ * Real, database-backed authentication using JWT tokens and active device session tracking.
+ * All authentication decisions, roles, and course accesses are verified by the backend.
  */
 
 const STORAGE_KEY = 'lms.session';
@@ -37,16 +30,6 @@ function writeStoredSession(session) {
     /* private browsing — the session simply won't survive a reload */
   }
 }
-
-/**
- * True when the auth route does not exist on this backend yet.
- *
- * Only a real 404 counts. A request that never got an answer (offline, DNS
- * failure, the server restarting) used to count too, which "signed in" a
- * token-less demo student whenever the API was unreachable — every page then
- * failed. Now that surfaces as a connection error on the form instead.
- */
-const isMissingRoute = (err) => err?.response?.status === 404;
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(() => readStoredSession());
@@ -92,26 +75,25 @@ export function AuthProvider({ children }) {
 
   const signIn = useCallback(
     async ({ email, password, remember = true }) => {
-      try {
-        const data = await authApi.login({ email, password });
-        const next = establish(data.student ?? data.user ?? data, data.token);
-        if (!remember) writeStoredSession(null);
-        return next.student;
-      } catch (err) {
-        if (!isMissingRoute(err)) throw err;
+      const data = await authApi.login({ email, password });
+      const next = establish(data.student ?? data.user ?? data, data.token);
+      if (!remember) writeStoredSession(null);
+      return next.student;
+    },
+    [establish]
+  );
 
-        // Demo fallback: the backend has no credential check, so we sign the
-        // student in against the mocked /api/me record and keep the address
-        // they typed.
-        const demo = await getMe().catch(() => ({
-          id: 'demo-student-1',
-          name: 'Demo Student',
-          email,
-        }));
-        const next = establish({ ...demo, email: email || demo.email });
-        if (!remember) writeStoredSession(null);
-        return next.student;
-      }
+  const activateWithPin = useCallback(
+    async ({ email, pin, deviceId, deviceInfo, remember = true }) => {
+      const data = await authApi.activateDevice({
+        email,
+        pin,
+        deviceId: deviceId || authApi.getOrCreateDeviceId(),
+        deviceInfo,
+      });
+      const next = establish(data.student ?? data.user, data.token);
+      if (!remember) writeStoredSession(null);
+      return data;
     },
     [establish]
   );
@@ -119,15 +101,8 @@ export function AuthProvider({ children }) {
   const signUp = useCallback(
     async ({ firstName, lastName, email, password, phone }) => {
       const name = `${firstName} ${lastName}`.trim();
-      try {
-        const data = await authApi.register({ firstName, lastName, name, email, password, phone });
-        return establish(data.student ?? data.user ?? data, data.token).student;
-      } catch (err) {
-        if (!isMissingRoute(err)) throw err;
-
-        const demo = await getMe().catch(() => ({ id: 'demo-student-1' }));
-        return establish({ ...demo, name: name || demo.name, email }).student;
-      }
+      const data = await authApi.register({ firstName, lastName, name, email, password, phone });
+      return establish(data.student ?? data.user ?? data, data.token).student;
     },
     [establish]
   );
@@ -234,6 +209,19 @@ export function AuthProvider({ children }) {
     return saved;
   }, []);
 
+  /** Completes learner onboarding personal details and sets profileCompleted = true. */
+  const submitProfileCompletion = useCallback(async (profileData) => {
+    const data = await authApi.completeProfile(profileData);
+    const updatedStudent = data.student ?? data.user ?? data;
+    setSession((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, student: { ...prev.student, ...updatedStudent } };
+      writeStoredSession(next);
+      return next;
+    });
+    return updatedStudent;
+  }, []);
+
   /** A password change revokes older tokens; this swaps in the fresh one. */
   const replaceToken = useCallback((token) => {
     setAuthToken(token);
@@ -252,15 +240,17 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(session?.student),
       initialising,
       signIn,
+      activateWithPin,
       signUp,
       signOut,
       terminateSession,
       updateProfile,
+      submitProfileCompletion,
       replaceToken,
       isAdmin: session?.student?.role === 'admin',
       isSuperAdmin: session?.student?.role === 'admin' && (session?.student?.adminRole || 'super_admin') === 'super_admin',
     }),
-    [session, initialising, signIn, signUp, signOut, terminateSession, updateProfile, replaceToken]
+    [session, initialising, signIn, activateWithPin, signUp, signOut, terminateSession, updateProfile, submitProfileCompletion, replaceToken]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -13,6 +13,7 @@ const SECTION_LABELS = {
   email: 'Email',
   notifications: 'Notifications',
   learning: 'Course access & completion rules',
+  activation: 'Device Activation & PIN',
 };
 
 /** GET /api/settings/public — branding and how to pay; no secrets. */

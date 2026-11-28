@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Course = require('../models/Course');
 const Lesson = require('../models/Lesson');
+const Progress = require('../models/Progress');
 const User = require('../models/User');
 const CourseAccess = require('../models/CourseAccess');
 const Enrollment = require('../models/Enrollment');
@@ -140,9 +141,50 @@ async function createCourse(req, res, next) {
   }
 }
 
+/**
+ * GET /api/admin/courses/:courseId/lessons
+ * Dedicated admin curriculum & video management endpoint.
+ * Returns all lessons with complete video metadata (Drive details, folder/module name, duration, order)
+ * without student lock restrictions.
+ */
+async function getCourseLessons(req, res, next) {
+  try {
+    const { courseId } = req.params;
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const lessons = await Lesson.find({ courseId }).sort({ order: 1, createdAt: 1 });
+    res.json(
+      lessons.map((lesson) => ({
+        _id: lesson._id,
+        courseId: lesson.courseId,
+        title: lesson.title,
+        description: lesson.description || '',
+        date: lesson.date || null,
+        duration: lesson.duration || 0,
+        order: lesson.order,
+        folderId: lesson.folderId || '',
+        folderName: lesson.folderName || 'General',
+        mimeType: lesson.mimeType || 'video/mp4',
+        driveFileName: lesson.driveFileName || '',
+        createdAt: lesson.createdAt,
+        updatedAt: lesson.updatedAt,
+        streamUrl: `/api/videos/${lesson._id}/stream`,
+      }))
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function addLesson(req, res, next) {
   try {
-    const { courseId, title, description, date, driveLink } = req.body;
+    const { courseId, title, description, date, driveLink, folderName, order: requestedOrder } = req.body;
 
     if (!courseId || !title || !driveLink) {
       return res.status(400).json({ error: 'courseId, title, and driveLink are required' });
@@ -154,7 +196,6 @@ async function addLesson(req, res, next) {
     }
 
     // Extract driveFileId from the link using the service
-    // normaliseFolderId works for file IDs too
     let driveFileId = driveService.normaliseFolderId(driveLink);
     if (!driveFileId) {
       return res.status(400).json({ error: 'Invalid Google Drive link' });
@@ -164,36 +205,31 @@ async function addLesson(req, res, next) {
     let driveMetadata;
     try {
       driveMetadata = await driveService.getVideoMetadata(driveFileId);
-      // A Drive shortcut has no bytes of its own: use the video it points to.
       if (driveMetadata.shortcutTargetId) {
         driveFileId = driveMetadata.shortcutTargetId;
         driveMetadata = await driveService.getVideoMetadata(driveFileId);
       }
     } catch (err) {
       console.error('[admin] Failed to fetch drive metadata:', err.message);
-      
-      const errorMessage = err.status === 404 
-        ? 'Drive file was not found, or is not shared with the service account.'
-        : err.status === 403
-        ? 'Google refused access to this file. Check that the Drive API is enabled.'
-        : err.message || 'Could not fetch Drive metadata. Ensure the file is shared with the service account.';
-        
+      const errorMessage =
+        err.status === 404
+          ? 'Drive file was not found, or is not shared with the service account.'
+          : err.status === 403
+          ? 'Google refused access to this file. Check that the Drive API is enabled.'
+          : err.message || 'Could not fetch Drive metadata. Ensure the file is shared with the service account.';
       return res.status(400).json({ error: errorMessage });
     }
 
-    // A folder's link (e.g. copied from the address bar while previewing a
-    // video in Drive) or a PDF/doc link would make a lesson that never plays.
     if (driveMetadata.mimeType === 'application/vnd.google-apps.folder') {
       return res.status(400).json({
         error:
           `That link is the Drive folder "${driveMetadata.name}", not a video. Open the folder, right-click ` +
-          'the video → Share → Copy link, and paste that. (The address bar shows the folder\'s link even ' +
-          'while a video is playing in Drive\'s preview.)',
+          'the video → Share → Copy link, and paste that.',
       });
     }
     if (!String(driveMetadata.mimeType).startsWith('video/')) {
       return res.status(400).json({
-        error: `"${driveMetadata.name}" is not a video file. Paste the link of a video (right-click it in Drive → Share → Copy link).`,
+        error: `"${driveMetadata.name}" is not a video file. Paste the link of a video file.`,
       });
     }
 
@@ -204,41 +240,57 @@ async function addLesson(req, res, next) {
       });
     }
 
-    // The file is visible but Drive will not hand over its bytes, so the lesson
-    // could never play. Refuse it now rather than show learners a broken player.
     if (!driveMetadata.canDownload) {
       return res.status(400).json({
         error:
           `"${driveMetadata.name}" has downloading turned off in Google Drive, so it cannot be streamed. ` +
-          'In Drive, open the file → Share → ⚙ Settings → tick "Viewers and commenters can see the ' +
-          'option to download, print, and copy", then add the lesson again.',
+          'In Drive, open the file → Share → Settings → tick "Viewers and commenters can see the option to download", then try again.',
       });
     }
 
-    // Get the next order number
-    const lastLesson = await Lesson.findOne({ courseId }).sort('-order');
-    const order = lastLesson ? lastLesson.order + 1 : 1;
+    // Calculate order
+    let order;
+    if (requestedOrder && Number.isFinite(Number(requestedOrder)) && Number(requestedOrder) > 0) {
+      order = Number(requestedOrder);
+    } else {
+      const lastLesson = await Lesson.findOne({ courseId }).sort('-order');
+      order = lastLesson ? lastLesson.order + 1 : 1;
+    }
+
+    const effectiveFolder = String(folderName || driveMetadata.folderName || 'General').trim();
 
     const lesson = new Lesson({
       courseId,
-      title,
-      description,
+      title: String(title).trim(),
+      description: String(description || '').trim(),
       date,
       order,
       driveFileId,
       driveFileName: driveMetadata.name,
       driveWebViewLink: driveMetadata.webViewLink,
       mimeType: driveMetadata.mimeType,
-      duration: driveMetadata.durationSeconds,
-      folderId: driveMetadata.folderId,
-      folderName: driveMetadata.folderName
+      duration: driveMetadata.durationSeconds || 0,
+      folderId: driveMetadata.folderId || '',
+      folderName: effectiveFolder,
     });
 
     await lesson.save();
 
-    // Update course to include this lesson in the array
-    course.lessons.push(lesson._id);
-    await course.save();
+    // Update course lessons array
+    if (!course.lessons.some((lId) => String(lId) === String(lesson._id))) {
+      course.lessons.push(lesson._id);
+      await course.save();
+    }
+
+    // Activity log
+    await activity.log(req, {
+      category: 'course',
+      action: 'lesson.created',
+      summary: `Added video lesson "${lesson.title}" (${effectiveFolder}) to "${course.title}"`,
+      entityType: 'course',
+      entityId: course._id,
+      meta: { lessonId: lesson._id, duration: lesson.duration, module: effectiveFolder },
+    });
 
     // Notify every learner who can currently open this course (grants + Full Access).
     await notifyUsers(
@@ -266,8 +318,12 @@ async function deleteCourse(req, res, next) {
       return res.status(404).json({ error: 'Course not found' });
     }
 
-    // Delete associated lessons, study materials (and who they were shared with) and reviews
+    // Delete associated lessons, study materials (and who they were shared with), reviews, and progress
+    const courseLessons = await Lesson.find({ courseId: id }).select('_id');
+    const lessonIds = courseLessons.map((l) => l._id);
+
     await Promise.all([
+      Progress.deleteMany({ $or: [{ courseId: id }, { lessonId: { $in: lessonIds } }] }),
       Lesson.deleteMany({ courseId: id }),
       Resource.deleteMany({ courseId: id }),
       ResourceAccess.deleteMany({ courseId: id }),
@@ -300,13 +356,38 @@ async function deleteLesson(req, res, next) {
       return res.status(404).json({ error: 'Lesson not found' });
     }
 
-    // Remove lesson ID from course.lessons array
-    await Course.findByIdAndUpdate(lesson.courseId, {
-      $pull: { lessons: id }
+    const courseId = lesson.courseId;
+    const course = await Course.findById(courseId);
+
+    // 1. Remove lesson ID from course.lessons array
+    await Course.findByIdAndUpdate(courseId, {
+      $pull: { lessons: id },
     });
 
-    // Delete the lesson
+    // 2. Clean up associated Progress rows for this lesson
+    await Progress.deleteMany({ lessonId: id });
+
+    // 3. Delete the lesson document
     await Lesson.findByIdAndDelete(id);
+
+    // 4. Re-sequence the remaining lessons for this course so ordering stays sequential (1, 2, 3...)
+    const remainingLessons = await Lesson.find({ courseId }).sort({ order: 1, createdAt: 1 });
+    for (let i = 0; i < remainingLessons.length; i++) {
+      if (remainingLessons[i].order !== i + 1) {
+        remainingLessons[i].order = i + 1;
+        await remainingLessons[i].save();
+      }
+    }
+
+    // 5. Activity log
+    await activity.log(req, {
+      category: 'course',
+      action: 'lesson.deleted',
+      summary: `Deleted video lesson "${lesson.title}" from course "${course?.title || courseId}"`,
+      entityType: 'course',
+      entityId: courseId,
+      meta: { lessonId: id, lessonTitle: lesson.title },
+    });
     
     res.json({ success: true, message: 'Lesson deleted successfully' });
   } catch (err) {
@@ -366,22 +447,185 @@ async function updateCourse(req, res, next) {
   }
 }
 
+/**
+ * PUT /api/admin/lessons/:id
+ * Complete video management: edit title, description, date, module/folder, order,
+ * and replace the video file/stream via a new Google Drive link.
+ */
 async function updateLesson(req, res, next) {
   try {
     const { id } = req.params;
-    const { title, description, date } = req.body;
+    const { title, description, date, folderName, order, driveLink } = req.body;
     
-    const lesson = await Lesson.findByIdAndUpdate(
-      id,
-      { title, description, date },
-      { new: true }
-    );
-    
+    const lesson = await Lesson.findById(id);
     if (!lesson) {
       return res.status(404).json({ error: 'Lesson not found' });
     }
-    
+
+    const course = await Course.findById(lesson.courseId);
+    let videoReplaced = false;
+
+    // Handle replacing the video via a new Google Drive link
+    if (driveLink && String(driveLink).trim()) {
+      let newDriveFileId = driveService.normaliseFolderId(String(driveLink).trim());
+      if (!newDriveFileId) {
+        return res.status(400).json({ error: 'Invalid Google Drive link provided for video replacement.' });
+      }
+
+      // Check if another lesson in the same course already uses this file
+      const clash = await Lesson.findOne({
+        courseId: lesson.courseId,
+        driveFileId: newDriveFileId,
+        _id: { $ne: id },
+      });
+      if (clash) {
+        return res.status(400).json({
+          error: `That Drive video is already used in this course by lesson "${clash.title}".`,
+        });
+      }
+
+      // Fetch metadata from Google Drive
+      let driveMetadata;
+      try {
+        driveMetadata = await driveService.getVideoMetadata(newDriveFileId);
+        if (driveMetadata.shortcutTargetId) {
+          newDriveFileId = driveMetadata.shortcutTargetId;
+          driveMetadata = await driveService.getVideoMetadata(newDriveFileId);
+        }
+      } catch (err) {
+        console.error('[admin] Failed to fetch replacement drive metadata:', err.message);
+        const errorMessage =
+          err.status === 404
+            ? 'Drive file was not found, or is not shared with the service account.'
+            : err.status === 403
+            ? 'Google refused access to this file. Check that the Drive API is enabled.'
+            : err.message || 'Could not fetch Drive metadata. Ensure the file is shared with the service account.';
+        return res.status(400).json({ error: errorMessage });
+      }
+
+      if (driveMetadata.mimeType === 'application/vnd.google-apps.folder') {
+        return res.status(400).json({
+          error: `That link is a Drive folder ("${driveMetadata.name}"), not a video file.`,
+        });
+      }
+      if (!String(driveMetadata.mimeType).startsWith('video/')) {
+        return res.status(400).json({
+          error: `"${driveMetadata.name}" is not a video file. Please paste a link to a video file.`,
+        });
+      }
+      if (!driveMetadata.canDownload) {
+        return res.status(400).json({
+          error: `"${driveMetadata.name}" has downloading turned off in Google Drive. Please enable downloading permissions.`,
+        });
+      }
+
+      lesson.driveFileId = newDriveFileId;
+      lesson.driveFileName = driveMetadata.name;
+      lesson.driveWebViewLink = driveMetadata.webViewLink;
+      lesson.mimeType = driveMetadata.mimeType;
+      lesson.duration = driveMetadata.durationSeconds || lesson.duration;
+      if (driveMetadata.folderId) lesson.folderId = driveMetadata.folderId;
+      if (driveMetadata.folderName && (!folderName || folderName === 'General')) {
+        lesson.folderName = driveMetadata.folderName;
+      }
+      videoReplaced = true;
+    }
+
+    if (title !== undefined) lesson.title = String(title).trim();
+    if (description !== undefined) lesson.description = String(description).trim();
+    if (date !== undefined) lesson.date = date;
+    if (folderName !== undefined) lesson.folderName = String(folderName).trim() || 'General';
+    if (order !== undefined && Number.isFinite(Number(order)) && Number(order) > 0) {
+      lesson.order = Number(order);
+    }
+
+    await lesson.save();
+
+    await activity.log(req, {
+      category: 'course',
+      action: videoReplaced ? 'lesson.video_replaced' : 'lesson.updated',
+      summary: videoReplaced
+        ? `Replaced video file for lesson "${lesson.title}" in course "${course?.title || lesson.courseId}"`
+        : `Updated video lesson details for "${lesson.title}" in course "${course?.title || lesson.courseId}"`,
+      entityType: 'course',
+      entityId: lesson.courseId,
+      meta: {
+        lessonId: lesson._id,
+        videoReplaced,
+        newDuration: lesson.duration,
+        module: lesson.folderName,
+      },
+    });
+
     res.json(lesson);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PUT /api/admin/courses/:courseId/lessons/reorder
+ * Reorder videos/lessons within a course and persist order to the database.
+ */
+async function reorderLessons(req, res, next) {
+  try {
+    const { courseId } = req.params;
+    const { lessonIds, lessonOrders } = req.body || {};
+
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    let itemsToUpdate = [];
+    if (Array.isArray(lessonIds) && lessonIds.length > 0) {
+      itemsToUpdate = lessonIds.map((id, index) => ({ id: String(id), order: index + 1 }));
+    } else if (Array.isArray(lessonOrders) && lessonOrders.length > 0) {
+      itemsToUpdate = lessonOrders.map((item) => ({ id: String(item.id || item._id), order: Number(item.order) }));
+    } else {
+      return res.status(400).json({ error: 'lessonIds or lessonOrders array is required' });
+    }
+
+    // Verify all lesson IDs belong to this course
+    const existingLessons = await Lesson.find({ courseId }).select('_id');
+    const existingIdSet = new Set(existingLessons.map((l) => String(l._id)));
+
+    for (const item of itemsToUpdate) {
+      if (!existingIdSet.has(item.id)) {
+        return res.status(400).json({ error: `Lesson ${item.id} does not belong to this course.` });
+      }
+    }
+
+    // Bulk update lesson orders
+    const bulkOps = itemsToUpdate.map((item) => ({
+      updateOne: {
+        filter: { _id: item.id, courseId },
+        update: { $set: { order: item.order } },
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await Lesson.bulkWrite(bulkOps);
+    }
+
+    // Keep course.lessons array in the updated order
+    const sortedLessons = await Lesson.find({ courseId }).sort({ order: 1, createdAt: 1 });
+    course.lessons = sortedLessons.map((l) => l._id);
+    await course.save();
+
+    await activity.log(req, {
+      category: 'course',
+      action: 'course.lessons_reordered',
+      summary: `Reordered ${sortedLessons.length} lessons in course "${course.title}"`,
+      entityType: 'course',
+      entityId: course._id,
+    });
+
+    res.json({ success: true, lessons: sortedLessons });
   } catch (err) {
     next(err);
   }
@@ -420,7 +664,7 @@ async function listStudents(req, res, next) {
   try {
     // $ne (not $eq 'student') also matches accounts created before the role
     // field existed, which never got it persisted to their stored document.
-    const students = await User.find({ role: { $ne: 'admin' } }).sort({ createdAt: -1 });
+    const students = await User.find({ role: { $ne: 'admin' }, status: { $ne: 'deleted' } }).sort({ createdAt: -1 });
     const grantCounts = await CourseAccess.aggregate([
       { $match: { active: true } },
       { $group: { _id: '$studentId', count: { $sum: 1 } } },
@@ -835,6 +1079,8 @@ async function deleteResource(req, res, next) {
 module.exports = {
   createCourse,
   addLesson,
+  getCourseLessons,
+  reorderLessons,
   deleteCourse,
   deleteLesson,
   updateCourse,

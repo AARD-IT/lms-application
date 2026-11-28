@@ -11,6 +11,7 @@ import { ErrorState } from '../components/States.jsx';
 import useCourses from '../hooks/useCourses.js';
 import useWishlist from '../hooks/useWishlist.js';
 import { courseStatus } from '../utils/course.js';
+import { COURSE_ACCESS_STATUS } from '../constants';
 
 const FILTERS = [
   { value: 'all', label: 'All' },
@@ -43,10 +44,17 @@ export default function MyCourses() {
 
   usePageMeta('My Courses', 'Everything you are enrolled in, in one place.');
 
-  // Courses the learner has active access to, or courses that are enrolled but temporarily suspended.
+  // Courses the learner has active access to, or courses with activation / payment pending or suspension.
   // Everything else lives in the Browse Courses catalogue instead.
   const courses = useMemo(
-    () => allCourses.filter((c) => c.hasAccess !== false || c.isSuspended),
+    () =>
+      allCourses.filter(
+        (c) =>
+          c.hasAccess === true ||
+          c.accessStatus === COURSE_ACCESS_STATUS.ACTIVATION_PENDING ||
+          c.accessStatus === COURSE_ACCESS_STATUS.PAYMENT_PENDING ||
+          c.isSuspended
+      ),
     [allCourses]
   );
 

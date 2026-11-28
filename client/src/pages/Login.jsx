@@ -25,6 +25,7 @@ export default function Login() {
   const [form, setForm] = useState({ email: '', password: '', remember: true });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
+  const [errorCode, setErrorCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   /**
@@ -86,6 +87,7 @@ export default function Login() {
   const onSubmit = async (event) => {
     event.preventDefault();
     setSubmitError('');
+    setErrorCode('');
     if (!validate()) return;
 
     setSubmitting(true);
@@ -93,6 +95,8 @@ export default function Login() {
       const signedIn = await signIn(form);
       navigate(landingFor(signedIn), { replace: true });
     } catch (err) {
+      const code = err?.response?.data?.code || '';
+      setErrorCode(code);
       setSubmitError(toErrorMessage(err, 'We could not sign you in. Check your details and try again.'));
     } finally {
       setSubmitting(false);
@@ -117,10 +121,22 @@ export default function Login() {
         {submitError && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3.5 text-sm text-red-700"
+            className="flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3.5 text-sm text-red-700"
           >
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            {submitError}
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{submitError}</span>
+            </div>
+            {errorCode === 'ACTIVATION_REQUIRED' && (
+              <div className="mt-1 pl-6">
+                <Link
+                  to={`/activate?email=${encodeURIComponent(form.email)}`}
+                  className="inline-flex items-center gap-1.5 font-semibold text-primary-700 hover:text-primary-800 underline text-xs"
+                >
+                  Go to Device Activation with PIN &rarr;
+                </Link>
+              </div>
+            )}
           </div>
         )}
 
@@ -164,6 +180,16 @@ export default function Login() {
           {submitting ? 'Signing in…' : 'Sign In'}
           {!submitting && <ArrowRight className="h-4 w-4" aria-hidden="true" />}
         </Button>
+
+        <div className="pt-2 text-center">
+          <Link
+            to="/activate"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:text-primary-700 bg-primary-50 hover:bg-primary-100/80 px-3 py-1.5 rounded-full transition-colors"
+          >
+            <Lock className="h-3 w-3" />
+            Have a 4-Digit Activation PIN? Activate Device &rarr;
+          </Link>
+        </div>
       </form>
 
       {/*

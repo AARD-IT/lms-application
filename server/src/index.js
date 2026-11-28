@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 
 const { connectDB } = require('./config/db');
+const packageService = require('./services/packageService');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const driveService = require('./services/googleDriveService');
 const { initSocket } = require('./services/socketService');
@@ -13,6 +14,7 @@ const { serveImage } = require('./controllers/uploadController');
 const { serveDocument } = require('./controllers/submissionController');
 const adminTicketRoutes = require('./routes/adminTicketRoutes');
 const studentTicketRoutes = require('./routes/studentTicketRoutes');
+const adminActivationRoutes = require('./routes/adminActivationRoutes');
 const routes = require('./routes');
 
 const PORT = process.env.PORT || 5000;
@@ -29,7 +31,8 @@ const LOCALHOST_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 function isOriginAllowed(origin) {
   if (!origin) return true;
   if (ALLOWED_ORIGINS.includes(origin)) return true;
-  return !IS_PRODUCTION && LOCALHOST_ORIGIN.test(origin);
+  if (LOCALHOST_ORIGIN.test(origin)) return true;
+  return !IS_PRODUCTION;
 }
 
 const app = express();
@@ -82,6 +85,9 @@ app.get('/uploads/documents/:filename', serveDocument);
 app.use('/api/admin/tickets', adminTicketRoutes);
 app.use('/api/tickets', studentTicketRoutes);
 
+// Device activation & PIN management routes
+app.use('/api/admin/activation', adminActivationRoutes);
+
 app.use('/api', routes);
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -104,6 +110,7 @@ initSocket(httpServer, isOriginAllowed);
 async function start() {
   try {
     await connectDB();
+    await packageService.ensureDefaultPackages();
   } catch (err) {
     console.error('[db] connection failed:', err.message);
     console.error('[db] is MongoDB running? Try: net start MongoDB');

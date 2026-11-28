@@ -131,6 +131,8 @@ export function useFlash() {
   };
 }
 
+import { PAYMENT_STATUS as PAYMENT_STATUS_ENUM } from '../../constants';
+
 const pillTones = {
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-600/15',
   amber: 'bg-amber-50 text-amber-700 ring-amber-600/20',
@@ -149,10 +151,12 @@ export function Pill({ tone = 'gray', children, className = '' }) {
 }
 
 export const PAYMENT_STATUS = {
-  completed: { label: 'Successful', tone: 'green' },
-  pending: { label: 'Pending', tone: 'amber' },
-  failed: { label: 'Failed', tone: 'red' },
-  cancelled: { label: 'Cancelled', tone: 'gray' },
+  [PAYMENT_STATUS_ENUM.COMPLETED]: { label: 'Successful', tone: 'green' },
+  [PAYMENT_STATUS_ENUM.VERIFIED]: { label: 'Verified', tone: 'blue' },
+  [PAYMENT_STATUS_ENUM.PENDING]: { label: 'Pending', tone: 'amber' },
+  [PAYMENT_STATUS_ENUM.FAILED]: { label: 'Failed', tone: 'red' },
+  [PAYMENT_STATUS_ENUM.CANCELLED]: { label: 'Cancelled', tone: 'gray' },
+  [PAYMENT_STATUS_ENUM.REFUNDED]: { label: 'Refunded', tone: 'gray' },
 };
 
 export function PaymentStatus({ status }) {

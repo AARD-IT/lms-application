@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Home,
   ImagePlus,
+  KeyRound,
   LogIn,
   Mail,
   Palette,
@@ -45,6 +46,7 @@ const TABS = [
   { value: 'login', label: 'Sign-in page', icon: LogIn },
   { value: 'homepage', label: 'Homepage', icon: Home },
   { value: 'payments', label: 'Payment gateway', icon: CreditCard },
+  { value: 'activation', label: 'Device Activation & PIN', icon: KeyRound },
   { value: 'email', label: 'Email & notifications', icon: Mail },
   { value: 'integrations', label: 'Google Sheet', icon: Sheet },
 ];
@@ -89,6 +91,7 @@ export default function AdminSettings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [sheetTesting, setSheetTesting] = useState(false);
+  const [defaultPinInput, setDefaultPinInput] = useState('');
   // Which image field is uploading, and how far along: { key, percent }.
   const [uploading, setUploading] = useState(null);
   const fileRef = useRef(null);
@@ -143,18 +146,20 @@ export default function AdminSettings() {
     ],
   };
 
-  const save = async (sections) => {
+  const save = async (sections, explicitPatch = null) => {
     for (const section of sections) {
-      for (const [key, label, allowUploads] of LINK_CHECKS[section] || []) {
-        if (!isValidLink(settings[section][key], { allowUploads })) {
-          flash.error(`${label} must be a full link starting with https://`);
-          return;
+      if (settings[section]) {
+        for (const [key, label, allowUploads] of LINK_CHECKS[section] || []) {
+          if (!isValidLink(settings[section][key], { allowUploads })) {
+            flash.error(`${label} must be a full link starting with https://`);
+            return;
+          }
         }
       }
     }
     setSaving(true);
     try {
-      const patch = Object.fromEntries(sections.map((s) => [s, settings[s]]));
+      const patch = explicitPatch || Object.fromEntries(sections.map((s) => [s, settings[s]]));
       const data = await updateAdminSettings(patch);
       setSettings(data.settings);
       setEmailConfigured(data.emailConfigured);
@@ -233,7 +238,7 @@ export default function AdminSettings() {
     }
   };
 
-  const { branding, loginPage, homepage, integrations, certificate, payments, email, notifications } = settings;
+  const { branding, loginPage, homepage, integrations, certificate, payments, email, notifications, activation = {} } = settings;
   // No choice saved yet: Resend if a key is saved (or nothing is set up), else the SMTP server already filled in.
   const emailProvider = email.provider || (email.hasResendApiKey || !email.smtpHost ? 'resend' : 'smtp');
   const sheetUrl = integrations.googleSheetId ? `https://docs.google.com/spreadsheets/d/${integrations.googleSheetId}/edit` : '';
@@ -524,6 +529,129 @@ export default function AdminSettings() {
             </div>
           </div>
           <div className="mt-6">{saveButton(['payments'])}</div>
+        </Panel>
+      )}
+
+      {/* --- device activation & PIN ---------------------------------------- */}
+      {tab === 'activation' && (
+        <Panel
+          icon={KeyRound}
+          title="One-Time PIN & Device Activation System"
+          description="Manage centralized platform settings for payment verification and the reusable default 4-digit activation PIN."
+          actions={
+            activation.systemEnabled !== false ? (
+              <Pill tone="green">System Active</Pill>
+            ) : (
+              <Pill tone="red">System Disabled</Pill>
+            )
+          }
+        >
+          <div className="space-y-6">
+            <div className="divide-y divide-ink-100">
+              <Toggle
+                id="activation-system-enabled"
+                label="Enable Device Activation System"
+                description="When enabled, students must verify payment and activate their courses using a 4-digit PIN on their primary device (System A). Multi-device access is blocked."
+                checked={activation.systemEnabled !== false}
+                onChange={set('activation', 'systemEnabled')}
+              />
+            </div>
+
+            <div className="rounded-xl border border-ink-100 bg-ink-50/50 p-5 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-ink-900">Reusable Default 4-Digit Activation PIN</h4>
+                  <p className="text-xs text-ink-500 mt-0.5">
+                    Students use their registered email and this 4-digit PIN to activate their authorized courses.
+                    The PIN is hashed at rest and never exposed.
+                  </p>
+                </div>
+                <Pill tone={Boolean(activation.hasDefaultPin || activation.hasDefaultPinHash) ? 'green' : 'amber'}>
+                  {Boolean(activation.hasDefaultPin || activation.hasDefaultPinHash) ? 'PIN Configured' : 'PIN Not Set'}
+                </Pill>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Input
+                    label="Configure / Update Default PIN (4 Digits)"
+                    type="password"
+                    maxLength={4}
+                    value={defaultPinInput}
+                    onChange={(e) => setDefaultPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder={
+                      Boolean(activation.hasDefaultPin || activation.hasDefaultPinHash)
+                        ? '•••• (Configured — enter 4 digits to change)'
+                        : 'Enter 4-digit default PIN (e.g. 1234)'
+                    }
+                    hint="Leave blank to keep currently configured default PIN. Enter 4 digits to change."
+                  />
+                </div>
+                <div>
+                  <Input
+                    label="Max Failed PIN Attempts"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={activation.maxFailedAttempts || 5}
+                    onChange={(e) => set('activation', 'maxFailedAttempts')(Number(e.target.value))}
+                    hint="Attempts before temporary lockout throttle is enforced."
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Input
+                    label="Lockout Duration (Minutes)"
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={activation.lockoutDurationMinutes || 15}
+                    onChange={(e) => set('activation', 'lockoutDurationMinutes')(Number(e.target.value))}
+                    hint="Time student must wait after exceeding max failed PIN attempts."
+                  />
+                </div>
+                <div>
+                  <Input
+                    label="Default PIN Validity (Hours)"
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={activation.defaultExpiryHours || 24}
+                    onChange={(e) => set('activation', 'defaultExpiryHours')(Number(e.target.value))}
+                    hint="Reference expiration window for platform authorization."
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end border-t border-ink-100 pt-5">
+              <Button
+                onClick={() => {
+                  const patch = { ...settings.activation };
+                  delete patch.defaultPinHash;
+                  delete patch.defaultPinSalt;
+                  delete patch.hasDefaultPin;
+                  delete patch.hasDefaultPinHash;
+                  delete patch.hasDefaultPinSalt;
+
+                  if (defaultPinInput) {
+                    if (!/^\d{4}$/.test(defaultPinInput)) {
+                      flash.error('Default PIN must be exactly 4 digits (0000 - 9999).');
+                      return;
+                    }
+                    patch.defaultPin = defaultPinInput;
+                  }
+                  save(['activation'], { activation: patch }).then(() => setDefaultPinInput(''));
+                }}
+                loading={saving}
+              >
+                <Save className="h-4 w-4" aria-hidden="true" />
+                Save activation settings
+              </Button>
+            </div>
+          </div>
         </Panel>
       )}
 

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const { PAYMENT_STATUS, ENROLLMENT_GATEWAYS } = require('../constants');
 
 /**
  * A student's request to join a course — the record behind the course
@@ -12,7 +13,13 @@ const crypto = require('crypto');
  * marks it paid; either way the learner is enrolled automatically. A
  * declined or abandoned gateway payment becomes `failed`.
  */
-const STATUSES = ['pending', 'completed', 'failed', 'cancelled'];
+const STATUSES = [
+  PAYMENT_STATUS.PENDING,
+  PAYMENT_STATUS.COMPLETED,
+  PAYMENT_STATUS.FAILED,
+  PAYMENT_STATUS.CANCELLED,
+  PAYMENT_STATUS.REFUNDED,
+];
 
 const historySchema = new mongoose.Schema(
   {

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { USER_ROLES, ADMIN_ROLES } = require('../constants');
 
 /**
  * Staff permissions within the admin panel. Every staff account has
@@ -7,28 +8,33 @@ const bcrypt = require('bcryptjs');
  * working); `adminRole` narrows what it may do. Accounts created before the
  * field existed have no value and are treated as super admins.
  */
-const ADMIN_ROLES = ['super_admin', 'support'];
+const ALLOWED_ADMIN_ROLES = Object.values(ADMIN_ROLES);
 
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
-    role: { type: String, enum: ['student', 'admin'], default: 'student' },
-    adminRole: { type: String, enum: ADMIN_ROLES },
+    role: { type: String, enum: Object.values(USER_ROLES), default: USER_ROLES.STUDENT },
+    adminRole: { type: String, enum: ALLOWED_ADMIN_ROLES },
 
     // --- profile / contact -------------------------------------------------
     phone: { type: String, default: '', trim: true },
     city: { type: String, default: '', trim: true },
+    education: { type: String, default: '', trim: true },
     headline: { type: String, default: '', trim: true },
     bio: { type: String, default: '', trim: true },
+    profileCompleted: { type: Boolean, default: false, index: true },
+    onboardingSubmittedAt: { type: Date },
 
     // --- account state -----------------------------------------------------
-    // A suspended account cannot sign in, and any token it still holds stops
+    // A suspended or deleted account cannot sign in, and any token it still holds stops
     // working on the next request.
-    status: { type: String, enum: ['active', 'suspended'], default: 'active', index: true },
+    status: { type: String, enum: ['active', 'suspended', 'deleted'], default: 'active', index: true },
     suspendedAt: { type: Date },
     suspendedReason: { type: String, default: '' },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     lastLoginAt: { type: Date },
 
     // --- course access -------------------------------------------------------

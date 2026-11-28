@@ -1,18 +1,36 @@
 import { Link } from 'react-router-dom';
-import { BookOpen, CheckCircle2, Clock, Heart, Lock, PlayCircle, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  Clock,
+  Heart,
+  Hourglass,
+  Key,
+  Lock,
+  PlayCircle,
+  Users,
+} from 'lucide-react';
 import Badge from '../common/Badge.jsx';
 import ProgressBar from '../common/ProgressBar.jsx';
 import Rating from '../common/Rating.jsx';
 import CourseThumbnailPreview from './CourseThumbnailPreview.jsx';
 import { compactNumber, formatHours, formatPrice } from '../../utils/course.js';
+import { COURSE_ACCESS_STATUS } from '../../constants';
 
 /**
- * The one course card used by the catalogue, the landing page and the
- * dashboard.
+ * The one course card used by the catalogue, the landing page and the dashboard.
  *
  * `variant`:
- *   catalogue — public browsing: price + rating, no progress
- *   enrolled  — inside the dashboard: progress bar + resume action
+ *   catalogue — public browsing: shows price / status, ratings, safe previews
+ *   enrolled  — inside the dashboard: shows progress / activation state
+ *
+ * Dynamic accessStatus:
+ *   - 'ACCESS_GRANTED'
+ *   - 'ACTIVATION_PENDING'
+ *   - 'PAYMENT_PENDING'
+ *   - 'LOCKED'
+ *   - 'SUSPENDED'
  */
 export default function CourseCard({
   course,
@@ -24,8 +42,23 @@ export default function CourseCard({
   const isEnrolled = variant === 'enrolled';
   const isComplete = course.progress >= 100;
   const isSuspended = Boolean(course.isSuspended);
-  const locked = course.hasAccess === false;
-  const href = to || (isEnrolled ? `/my-courses/${course._id}` : `/courses/${course._id}`);
+
+  const status =
+    course.accessStatus ||
+    (isSuspended
+      ? COURSE_ACCESS_STATUS.SUSPENDED
+      : course.hasAccess
+        ? COURSE_ACCESS_STATUS.ACCESS_GRANTED
+        : COURSE_ACCESS_STATUS.LOCKED);
+
+  const defaultHref =
+    status === COURSE_ACCESS_STATUS.ACTIVATION_PENDING
+      ? '/activate'
+      : isEnrolled
+        ? `/my-courses/${course._id}`
+        : `/courses/${course._id}`;
+
+  const href = to || defaultHref;
 
   const duration = formatHours(course.hours);
   const students = compactNumber(course.studentsCount);
@@ -57,26 +90,42 @@ export default function CourseCard({
           )}
         </div>
 
-        {isSuspended ? (
+        {isSuspended || status === COURSE_ACCESS_STATUS.SUSPENDED ? (
           <span className="absolute bottom-3 left-3">
             <Badge tone="error" icon={Lock}>
               Access Suspended
             </Badge>
           </span>
-        ) : locked ? (
+        ) : status === COURSE_ACCESS_STATUS.ACTIVATION_PENDING ? (
           <span className="absolute bottom-3 left-3">
-            <Badge tone="overlay" icon={Lock}>
-              Access restricted
+            <Badge tone="warning" icon={Key}>
+              Activation Pending
             </Badge>
           </span>
-        ) : (
-          isComplete && (
-            <span className="absolute bottom-3 left-3">
+        ) : status === COURSE_ACCESS_STATUS.PAYMENT_PENDING ? (
+          <span className="absolute bottom-3 left-3">
+            <Badge tone="warning" icon={Hourglass}>
+              Payment Verification Pending
+            </Badge>
+          </span>
+        ) : status === COURSE_ACCESS_STATUS.ACCESS_GRANTED ? (
+          <span className="absolute bottom-3 left-3">
+            {isComplete ? (
               <Badge tone="success" icon={CheckCircle2}>
                 Completed
               </Badge>
-            </span>
-          )
+            ) : (
+              <Badge tone="success" icon={CheckCircle2}>
+                Access Granted
+              </Badge>
+            )}
+          </span>
+        ) : (
+          <span className="absolute bottom-3 left-3">
+            <Badge tone="overlay" icon={Lock}>
+              Locked
+            </Badge>
+          </span>
         )}
       </CourseThumbnailPreview>
 
@@ -87,7 +136,7 @@ export default function CourseCard({
               {course.title}
             </Link>
           </h3>
-          {!isEnrolled && (
+          {status !== COURSE_ACCESS_STATUS.ACCESS_GRANTED && !isEnrolled && (
             <span className="shrink-0 text-right">
               <span className="block text-sm font-bold text-primary-700">
                 {formatPrice(course.price)}
@@ -101,8 +150,6 @@ export default function CourseCard({
           )}
         </div>
 
-        {/* The admin's short summary is written for exactly this slot; the
-            longer description is the fallback for courses without one. */}
         <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-ink-600">
           {course.summary || course.description}
         </p>
@@ -128,23 +175,49 @@ export default function CourseCard({
           )}
         </div>
 
-        {/* Everything below is pinned to the bottom so cards line up. */}
+        {/* Pinned action footer */}
         <div className="mt-auto pt-4">
-          {isEnrolled ? (
-            isSuspended ? (
-              <p className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-red-600">
-                <Lock className="h-4 w-4" aria-hidden="true" />
-                Access Suspended
+          {status === COURSE_ACCESS_STATUS.SUSPENDED ? (
+            <p className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-red-600">
+              <Lock className="h-4 w-4" aria-hidden="true" />
+              Access Suspended
+            </p>
+          ) : status === COURSE_ACCESS_STATUS.ACTIVATION_PENDING ? (
+            <div className="space-y-2 border-t border-ink-100 pt-3.5">
+              <p className="text-[12px] font-medium leading-snug text-amber-800">
+                Payment verified. Activate device using your 4-digit PIN to access.
               </p>
-            ) : locked ? (
-              /* Could be an admin revocation or a payment still being
-                 confirmed — the course page knows which, so point there
-                 rather than guessing at the reason here. */
-              <p className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary-700">
-                <Lock className="h-4 w-4" aria-hidden="true" />
-                Locked — see details
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
+                  <Key className="h-3.5 w-3.5" /> PIN Required
+                </span>
+                <Link
+                  to="/activate"
+                  className="relative z-10 inline-flex items-center gap-1 text-[13px] font-semibold text-amber-700 hover:text-amber-800"
+                >
+                  Activate Access <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          ) : status === COURSE_ACCESS_STATUS.PAYMENT_PENDING ? (
+            <div className="space-y-2 border-t border-ink-100 pt-3.5">
+              <p className="text-[12px] font-medium leading-snug text-amber-800">
+                Payment received. Awaiting admin manual verification before activation.
               </p>
-            ) : (
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
+                  <Hourglass className="h-3.5 w-3.5" /> Under Review
+                </span>
+                <Link
+                  to={`/courses/${course._id}`}
+                  className="relative z-10 inline-flex items-center gap-1 text-[13px] font-semibold text-primary-700 hover:text-primary-800"
+                >
+                  View Status <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          ) : status === COURSE_ACCESS_STATUS.ACCESS_GRANTED ? (
+            isEnrolled ? (
               <>
                 <div className="mb-1.5 flex items-center justify-between text-xs">
                   <span className="font-medium text-ink-600">
@@ -162,11 +235,23 @@ export default function CourseCard({
                   {isComplete ? 'Review course' : course.progress > 0 ? 'Continue learning' : 'Start course'}
                 </p>
               </>
+            ) : (
+              <div className="flex items-center justify-between gap-3 border-t border-ink-100 pt-3.5">
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Access Granted
+                </span>
+                <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-primary-700 group-hover:text-primary-800">
+                  Continue Learning <ArrowRight className="h-3.5 w-3.5" />
+                </span>
+              </div>
             )
           ) : (
             <div className="flex items-center justify-between gap-3 border-t border-ink-100 pt-3.5">
               <span className="truncate text-xs text-ink-500">{course.instructor}</span>
-              <Rating value={course.rating} />
+              <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-primary-700 group-hover:text-primary-800">
+                View Course <ArrowRight className="h-3.5 w-3.5" />
+              </span>
             </div>
           )}
         </div>

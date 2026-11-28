@@ -1,15 +1,19 @@
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const Assignment = require('../models/Assignment');
 const Certificate = require('../models/Certificate');
 const Course = require('../models/Course');
 const CourseAccess = require('../models/CourseAccess');
+const DeviceActivation = require('../models/DeviceActivation');
 const Enrollment = require('../models/Enrollment');
 const Lesson = require('../models/Lesson');
+const Notification = require('../models/Notification');
 const Progress = require('../models/Progress');
 const Resource = require('../models/Resource');
 const ResourceAccess = require('../models/ResourceAccess');
 const Submission = require('../models/Submission');
+const TicketNotification = require('../models/TicketNotification');
 const User = require('../models/User');
 const activity = require('../services/activityService');
 const mailService = require('../services/mailService');
@@ -25,7 +29,7 @@ const { sendResetLink } = require('./authController');
  */
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const LEARNER_FILTER = { role: { $ne: 'admin' } };
+const LEARNER_FILTER = { role: { $ne: 'admin' }, status: { $ne: 'deleted' } };
 const PROGRESS_STATES = ['not_enrolled', 'not_started', 'in_progress', 'completed'];
 
 /**
@@ -67,7 +71,7 @@ async function listLearners(req, res, next) {
     const learners = await User.find(filter).sort({ createdAt: -1 }).limit(1000);
     const ids = learners.map((l) => l._id);
 
-    const [grants, enrollments, submissions, progressRows, lessonCounts, assignments, materialCounts] = await Promise.all([
+    const [grants, enrollments, submissions, progressRows, lessonCounts, assignments, materialCounts, activations] = await Promise.all([
       CourseAccess.find({ studentId: { $in: ids }, active: true }).select('studentId courseId expiresAt active suspended'),
       Enrollment.find({ studentId: { $in: ids }, amount: { $gt: 0 } }).select('studentId status amount'),
       Submission.find({ studentId: { $in: ids } }).select('studentId assignmentId courseId status'),
@@ -88,10 +92,12 @@ async function listLearners(req, res, next) {
         { $match: { studentId: { $in: ids } } },
         { $group: { _id: '$studentId', count: { $sum: 1 } } },
       ]),
+      DeviceActivation.find({ studentId: { $in: ids } }).select('studentId status paymentStatus packageName packageIdentifier isActivated'),
     ]);
 
     const lessonsIn = new Map(lessonCounts.map((r) => [String(r._id), r.count]));
     const materialsBy = new Map(materialCounts.map((r) => [String(r._id), r.count]));
+    const activationBy = new Map(activations.map((a) => [String(a.studentId), a]));
 
     const coursesBy = new Map();
     for (const grant of grants) {
@@ -184,8 +190,19 @@ async function listLearners(req, res, next) {
       const pendingTasks = applicable.filter((a) => !handedIn.has(String(a._id)));
       const scopedSubmissions = scopedCourse ? mine.filter((s) => String(s.courseId) === scopedCourse) : mine;
 
+      const act = activationBy.get(key);
+
       return {
         ...learner.toJSON(),
+        activation: act
+          ? {
+              status: act.status,
+              paymentStatus: act.paymentStatus,
+              packageName: act.packageName,
+              packageIdentifier: act.packageIdentifier,
+              isActivated: act.isActivated,
+            }
+          : null,
         courseCount: granted.size,
         materialCount: materialsBy.get(key) || 0,
         pendingPayments: pay.pending,
@@ -243,7 +260,7 @@ async function getLearner(req, res, next) {
     if (!learner) return res.status(404).json({ error: 'Learner not found' });
 
     const id = learner._id;
-    const [grants, enrollments, submissions, certificates, progressRows, materialGrants, allCourses] = await Promise.all([
+    const [grants, enrollments, submissions, certificates, progressRows, materialGrants, allCourses, activation] = await Promise.all([
       CourseAccess.find({ studentId: id }).populate('courseId', 'title slug thumbnail price published'),
       Enrollment.find({ studentId: id }).populate('courseId', 'title price').sort({ createdAt: -1 }),
       Submission.find({ studentId: id })
@@ -258,6 +275,7 @@ async function getLearner(req, res, next) {
         .sort({ createdAt: -1 }),
       // Full Access covers every published course, granted or not.
       learner.fullAccess ? Course.find({ published: { $ne: false } }).select('title slug thumbnail price published') : [],
+      DeviceActivation.findOne({ studentId: id }).populate('packageId', 'name identifier slug tier description price'),
     ]);
 
     const grantedIds = new Set(grants.filter((g) => g.courseId).map((g) => String(g.courseId._id)));
@@ -332,6 +350,7 @@ async function getLearner(req, res, next) {
 
     res.json({
       learner,
+      activation,
       courses,
       enrollments,
       submissions,
@@ -716,6 +735,17 @@ async function resetUserPassword(req, res, next) {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: 'Account not found' });
 
+    // Legacy password-based activation removal:
+    // Students cannot be granted course access or activated via temporary passwords.
+    // They must use the Payment Verification & Device Activation PIN workflow.
+    if (user.role !== 'admin' && mode === 'temporary') {
+      return res.status(400).json({
+        error:
+          'Temporary password activation for students has been disabled. Please use the Device Activation & PIN workflow to verify payment and authorize courses.',
+        code: 'LEGACY_ACTIVATION_DISABLED',
+      });
+    }
+
     let password = '';
     if (mode === 'link') {
       if (!(await mailService.isConfigured())) {
@@ -757,12 +787,141 @@ async function resetUserPassword(req, res, next) {
   }
 }
 
+/**
+ * DELETE /api/admin/learners/:id
+ * Securely deletes or anonymizes a learner account.
+ * - Prevents deleting self (current logged-in admin).
+ * - Prevents deleting other admin accounts via this endpoint.
+ * - Cleans up active course access, resource access, device activations, notifications.
+ * - Preserves financial transaction integrity (Enrollment, Razorpay records) and certificates:
+ *   If paid enrollments or certificates exist, user data is anonymized, password wiped,
+ *   sessions destroyed, and status set to 'deleted' so audit/financial reports remain accurate.
+ *   If no financial or certificate records exist, the user document and progress are cleanly removed.
+ */
+async function deleteLearner(req, res, next) {
+  try {
+    const { id } = req.params;
+    if (!id || !mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: 'Valid learner ID is required' });
+    }
+
+    // 1. Prevent deleting self
+    if (String(req.user._id) === String(id)) {
+      return res.status(400).json({ error: 'You cannot delete your own admin account.' });
+    }
+
+    const learner = await User.findById(id);
+    if (!learner || learner.status === 'deleted') {
+      return res.status(404).json({ error: 'Learner not found' });
+    }
+
+    // 2. Prevent deleting admin accounts through the learner endpoint
+    if (learner.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be deleted through the learner interface.' });
+    }
+
+    const learnerName = learner.name;
+    const learnerEmail = learner.email;
+
+    // 3. Clean up active access and device bindings
+    await Promise.all([
+      CourseAccess.deleteMany({ studentId: id }),
+      ResourceAccess.deleteMany({ studentId: id }),
+      DeviceActivation.deleteMany({ studentId: id }),
+      Notification.deleteMany({ userId: id }),
+      TicketNotification.deleteMany({ recipient: id }),
+    ]);
+
+    // 4. Check for financial transactions or issued certificates
+    const [paidEnrollmentsCount, certificatesCount] = await Promise.all([
+      Enrollment.countDocuments({
+        studentId: id,
+        $or: [{ amount: { $gt: 0 } }, { status: 'completed' }, { gateway: 'razorpay' }],
+      }),
+      Certificate.countDocuments({ userId: id }),
+    ]);
+
+    const hasFinancialOrCertRecords = paidEnrollmentsCount > 0 || certificatesCount > 0;
+
+    if (hasFinancialOrCertRecords) {
+      // Retain record for financial & audit compliance, but anonymize all personal data
+      const anonymizedEmail = `deleted_${id}_${Date.now()}@deleted.local`;
+      const salt = await bcrypt.genSalt(10);
+      const scrambledPassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), salt);
+
+      learner.name = 'Deleted Learner';
+      learner.email = anonymizedEmail;
+      learner.phone = '';
+      learner.city = '';
+      learner.headline = '';
+      learner.bio = '';
+      learner.password = scrambledPassword;
+      learner.status = 'deleted';
+      learner.fullAccess = false;
+      learner.currentSessionId = null;
+      learner.passwordChangedAt = new Date();
+      learner.deletedAt = new Date();
+      learner.deletedBy = req.user._id;
+
+      await learner.save();
+
+      // Log note in enrollment history to record deletion
+      await Enrollment.updateMany(
+        { studentId: id },
+        {
+          $push: {
+            history: {
+              status: 'cancelled',
+              note: `Learner account deleted by admin (${req.user.name || req.user.email})`,
+              by: req.user._id,
+              at: new Date(),
+            },
+          },
+        }
+      );
+    } else {
+      // Zero financial or certificate records - completely remove user and progress
+      await Promise.all([
+        Progress.deleteMany({ studentId: String(id) }),
+        Submission.deleteMany({ studentId: id }),
+        Enrollment.deleteMany({ studentId: id }),
+        User.findByIdAndDelete(id),
+      ]);
+    }
+
+    // 5. Activity log
+    await activity.log(req, {
+      category: 'learner',
+      action: 'learner.deleted',
+      summary: `Deleted learner account "${learnerName}" (${learnerEmail})${
+        hasFinancialOrCertRecords ? ' [financial audit records preserved]' : ''
+      }`,
+      entityType: 'user',
+      entityId: id,
+      meta: {
+        learnerName,
+        learnerEmail,
+        preservedFinancialRecords: hasFinancialOrCertRecords,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Learner account "${learnerName}" deleted successfully.`,
+      preservedFinancialRecords: hasFinancialOrCertRecords,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   listLearners,
   getLearner,
   setLearnerFullAccess,
   setLearnerMaterials,
   setLearnerStatus,
+  deleteLearner,
   enrolLearner,
   unenrolLearner,
   suspendCourseAccess,
