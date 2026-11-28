@@ -486,8 +486,27 @@ export const updateTicketStatus = (id, payload) => api.patch(`/admin/tickets/${i
 export const adminReplyToTicket = (id, payload) => api.post(`/admin/tickets/${id}/reply`, payload).then((r) => r.data);
 
 // --- onboarding & personal details ---
-export const completeProfile = (payload) =>
-  api.put('/auth/complete-profile', payload).then((r) => r.data);
+// Complete profile onboarding for personal details (supports fallback if older deployed backend is in use)
+export const completeProfile = async (payload) => {
+  try {
+    const response = await api.put('/auth/complete-profile', payload);
+    return response.data;
+  } catch (err) {
+    // If backend answers 404 (e.g. client pointed to a remote backend version not yet updated),
+    // fall back to /me to ensure learner profile update succeeds without disrupting onboarding.
+    if (err?.response?.status === 404) {
+      const fallback = await api.put('/me', {
+        ...payload,
+        profileCompleted: true,
+      });
+      return {
+        message: 'Personal details saved successfully.',
+        student: fallback.data,
+      };
+    }
+    throw err;
+  }
+};
 
 // --- 3-tier course packages ---
 export const getPackages = () => api.get('/packages').then((r) => r.data);

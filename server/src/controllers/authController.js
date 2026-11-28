@@ -285,13 +285,20 @@ async function completeProfile(req, res, next) {
 async function updateMe(req, res, next) {
   try {
     const body = req.body || {};
-    const limits = { name: 80, phone: 20, city: 80, headline: 120, bio: 1000 };
+    const limits = { name: 80, phone: 20, city: 80, education: 120, headline: 120, bio: 1000 };
 
     for (const [field, max] of Object.entries(limits)) {
       if (body[field] === undefined) continue;
       const value = String(body[field]).trim().slice(0, max);
       if (field === 'name' && !value) return res.status(400).json({ error: 'Name cannot be empty' });
       req.user[field] = value;
+    }
+
+    if (body.profileCompleted !== undefined) {
+      req.user.profileCompleted = Boolean(body.profileCompleted);
+      if (req.user.profileCompleted && !req.user.onboardingSubmittedAt) {
+        req.user.onboardingSubmittedAt = new Date();
+      }
     }
 
     await req.user.save();

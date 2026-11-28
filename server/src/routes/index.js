@@ -52,7 +52,14 @@ router.post('/auth/logout', optionalAuth, authController.logout);
 router.get('/auth/session', requireAuth, authController.checkSession);
 router.post('/auth/forgot-password', authController.forgotPassword);
 router.post('/auth/reset-password', authController.resetPassword);
-router.put('/auth/complete-profile', requireAuth, authController.completeProfile);
+router
+  .route('/auth/complete-profile')
+  .put(requireAuth, authController.completeProfile)
+  .post(requireAuth, authController.completeProfile);
+router
+  .route('/complete-profile')
+  .put(requireAuth, authController.completeProfile)
+  .post(requireAuth, authController.completeProfile);
 
 // --- device activation & PIN verification ---
 router.post('/auth/activate', activationController.activateDevice);
